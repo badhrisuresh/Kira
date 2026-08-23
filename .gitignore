@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+client_secret.json
+token.pickle
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Local test artifacts
+/tmp/
+*.mp4
+
+# ADK local runtime state
+.adk/
+*.db
