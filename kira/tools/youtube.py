@@ -19,8 +19,12 @@ def upload_to_youtube(video_url: str, title: str, description: str) -> str:
         description: YouTube description with source citation.
 
     Returns: YouTube video ID string."""
-    local_path = "/tmp/kira_upload.mp4"
-    urllib.request.urlretrieve(video_url, local_path)
+    # Accept both URLs and local file paths (from concat_videos).
+    if os.path.isfile(video_url):
+        local_path = video_url
+    else:
+        local_path = "/tmp/kira_upload.mp4"
+        urllib.request.urlretrieve(video_url, local_path)
 
     with open(TOKEN_FILE, "rb") as f:
         creds = pickle.load(f)

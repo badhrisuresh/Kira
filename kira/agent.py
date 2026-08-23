@@ -8,6 +8,7 @@ from .tools.memory import read_memory, write_memory
 from .tools.trends import search_trends
 from .tools.image_gen import generate_image
 from .tools.video_gen import generate_video
+from .tools.concat_videos import concat_videos
 from .tools.youtube import upload_to_youtube
 
 MODEL = "gemini-3.5-flash"
@@ -50,18 +51,58 @@ web_trends_agent = LlmAgent(
     ),
 )
 
+
+# ──────────────────────────────────────────────
+# SKILL AGENTS: Script Writer & Production Planner
+# ──────────────────────────────────────────────
+# These are single-turn sub-agents of the execution agent. Their skill
+# prompts (.md files) are loaded into context only while they run, then
+# discarded — keeping the execution agent's own context lean.
+
+script_writer_agent = LlmAgent(
+    name="script_writer",
+    model=MODEL,
+    mode="single_turn",
+    description=(
+        "Expert short-form video scriptwriter. Takes a creative brief "
+        "and returns a complete production-ready script with beat-by-beat "
+        "narration, visual descriptions, audio design, title, and "
+        "description. Call this FIRST before production planning."
+    ),
+    instruction=_load_prompt("script_writer.md"),
+)
+
+production_planner_agent = LlmAgent(
+    name="production_planner",
+    model=MODEL,
+    mode="single_turn",
+    description=(
+        "Video production planner. Takes a finished script and breaks it "
+        "into a shot-by-shot production spec: number of shots (2-4), "
+        "each shot's duration (4/6/8 s), reference image prompts, video "
+        "generation prompts, and continuity notes. Call this AFTER "
+        "script_writer returns the script."
+    ),
+    instruction=_load_prompt("production_breakdown.md"),
+)
+
+
 # ──────────────────────────────────────────────
 # AGENT 2: Execution Agent (sub-agent)
 # ──────────────────────────────────────────────
+# Orchestrates the full production pipeline:
+#   brief → script_writer → production_planner → generate images →
+#   generate videos → concat → upload → memory
 
 execution_agent = LlmAgent(
     name="execution_agent",
     model=MODEL,
     description=(
         "Production agent that takes a confirmed creative brief and "
-        "autonomously produces the final video: generates reference "
-        "images, generates an 8-second video with native audio, "
-        "uploads to YouTube, and saves the result to memory. "
+        "autonomously produces the final video: writes a script, plans "
+        "shots, generates reference images, generates multi-shot video "
+        "(15-20 s), concatenates clips, uploads to YouTube, and saves "
+        "the result to memory. "
         "Transfer to this agent ONLY after the user has confirmed "
         "the topic and creative brief."
     ),
@@ -69,10 +110,13 @@ execution_agent = LlmAgent(
     tools=[
         generate_image,
         generate_video,
+        concat_videos,
         upload_to_youtube,
         write_memory,
     ],
+    sub_agents=[script_writer_agent, production_planner_agent],
 )
+
 
 # ──────────────────────────────────────────────
 # AGENT 1: Research Agent (root_agent)
