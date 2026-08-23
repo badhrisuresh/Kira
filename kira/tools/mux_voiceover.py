@@ -1,127 +1,76 @@
 import os
-import subprocess
 import uuid
 
-import requests
+import subprocess
+
+from .audio_utils import (
+    atempo_filter_chain,
+    download,
+    probe_duration,
+    tempo_for_duration,
+)
+
+# Mix levels: VO dominant, music as quiet bed underneath.
+_MUSIC_VOLUME = 0.18
+_VO_VOLUME = 1.0
 
 
-def fit_and_mux_voiceover(video_path: str, audio_url: str) -> str:
-    """Speed-adjust a TTS voiceover to match the video length, then mix
-    it over the video's existing SFX bed.
+def fit_and_mux_audio(
+    video_path: str,
+    voiceover_url: str,
+    music_url: str,
+) -> str:
+    """Discard video-clip audio, fit TTS + background music to video
+    length, and mux into the final Short.
 
-    Call this AFTER concat_videos() and generate_voiceover().
+    Call this AFTER concat_videos(), generate_voiceover(), and
+    generate_background_music().
 
     Args:
-        video_path: Local path to the concatenated video
-            (from concat_videos).
-        audio_url: TTS MP3 URL (from generate_voiceover).
+        video_path: Local path to the concatenated video (visuals only
+            from the caller's perspective — any clip audio is ignored).
+        voiceover_url: TTS MP3 URL (from generate_voiceover).
+        music_url: Background music MP3 URL (from generate_background_music).
 
-    Returns: Local path to a new mp4 with VO mixed in. Pass this to
-        upload_to_youtube()."""
-    audio_path = f"/tmp/kira_vo_{uuid.uuid4().hex[:6]}.mp3"
-    _download(audio_url, audio_path)
+    Returns: Local path to the final mp4. Pass to upload_to_youtube()."""
+    vo_path = f"/tmp/kira_vo_{uuid.uuid4().hex[:6]}.mp3"
+    music_path = f"/tmp/kira_music_{uuid.uuid4().hex[:6]}.mp3"
+    download(voiceover_url, vo_path)
+    download(music_url, music_path)
 
-    video_dur = _probe_duration(video_path)
-    audio_dur = _probe_duration(audio_path)
+    video_dur = probe_duration(video_path)
+    vo_tempo = tempo_for_duration(probe_duration(vo_path), video_dur)
+    music_tempo = tempo_for_duration(probe_duration(music_path), video_dur)
 
-    # tempo > 1 speeds audio up (shortens); < 1 slows it down.
-    tempo = audio_dur / video_dur if video_dur > 0 else 1.0
-    # Avoid tiny no-op adjustments / divide-by-zero weirdness.
-    if abs(tempo - 1.0) < 0.03:
-        tempo = 1.0
+    vo_atempo = atempo_filter_chain(vo_tempo)
+    music_atempo = atempo_filter_chain(music_tempo)
+    output_path = f"/tmp/kira_final_mux_{uuid.uuid4().hex[:6]}.mp4"
 
-    atempo = _atempo_filter_chain(tempo)
-    output_path = f"/tmp/kira_vo_mux_{uuid.uuid4().hex[:6]}.mp4"
-
-    if _has_audio(video_path):
-        # Mix: VO at full level, SFX bed quieter underneath.
-        # duration=first keeps output length = video length.
-        filter_complex = (
-            f"[1:a]{atempo},volume=1.0[vo];"
-            f"[0:a]volume=0.35[sfx];"
-            f"[vo][sfx]amix=inputs=2:duration=first:dropout_transition=0[a]"
-        )
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-filter_complex", filter_complex,
-            "-map", "0:v:0",
-            "-map", "[a]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            output_path,
-        ]
-    else:
-        # Video has no SFX bed — just attach speed-adjusted VO.
-        filter_complex = f"[1:a]{atempo}[a]"
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-filter_complex", filter_complex,
-            "-map", "0:v:0",
-            "-map", "[a]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            output_path,
-        ]
-
-    subprocess.run(cmd, check=True, capture_output=True)
-
-    os.remove(audio_path)
-    return output_path
-
-
-def _atempo_filter_chain(tempo: float) -> str:
-    """Build an atempo chain. Each atempo filter only accepts 0.5–2.0."""
-    tempo = max(0.5, min(tempo, 4.0))  # hard clamp for sanity
-    factors: list[float] = []
-    remaining = tempo
-    while remaining > 2.0:
-        factors.append(2.0)
-        remaining /= 2.0
-    while remaining < 0.5:
-        factors.append(0.5)
-        remaining /= 0.5
-    factors.append(round(remaining, 4))
-    return ",".join(f"atempo={f}" for f in factors)
-
-
-def _has_audio(path: str) -> bool:
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", "a",
-            "-show_entries", "stream=codec_type",
-            "-of", "csv=p=0",
-            path,
-        ],
-        capture_output=True,
-        text=True,
+    # Input 0: video (video stream only). Inputs 1/2: music + VO.
+    filter_complex = (
+        f"[1:a]{music_atempo},volume={_MUSIC_VOLUME}[music];"
+        f"[2:a]{vo_atempo},volume={_VO_VOLUME}[vo];"
+        f"[music][vo]amix=inputs=2:duration=first:dropout_transition=0[a]"
     )
-    return bool(result.stdout.strip())
 
-
-def _probe_duration(path: str) -> float:
-    result = subprocess.run(
+    subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            path,
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", music_path,
+            "-i", vo_path,
+            "-filter_complex", filter_complex,
+            "-map", "0:v:0",
+            "-map", "[a]",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-shortest",
+            output_path,
         ],
         check=True,
         capture_output=True,
-        text=True,
     )
-    return float(result.stdout.strip())
 
-
-def _download(url: str, dest: str) -> None:
-    resp = requests.get(url, timeout=120)
-    resp.raise_for_status()
-    with open(dest, "wb") as f:
-        f.write(resp.content)
+    os.remove(vo_path)
+    os.remove(music_path)
+    return output_path

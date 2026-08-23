@@ -20,8 +20,8 @@ def generate_voiceover(prompt: str) -> str:
             include stage directions, SFX notes, or shot labels; only
             the words that should be spoken.
 
-    Returns: URL of the generated MP3 audio file. Pass this to
-        fit_and_mux_voiceover() along with the concatenated video."""
+    Returns: URL of the generated MP3. Pass to fit_and_mux_audio()
+        along with the concatenated video and background music URL."""
     result = fal_client.subscribe(
         "fal-ai/gemini-3.1-flash-tts",
         arguments={

@@ -7,10 +7,10 @@ def generate_video(image_urls: list[str], prompt: str, duration: int | str = 8) 
 
     Args:
         image_urls: List of reference image URLs (from generate_image).
-        prompt: Motion and SFX prompt. Describe camera movement,
-            subject action, and ambient/SFX sound design only.
-            Do not include spoken narration or voiceover — TTS is
-            added later. Always specify 9:16 vertical.
+        prompt: Motion and visual prompt. Describe camera movement and
+            subject action only — no audio, SFX, or narration (clip
+            audio is discarded; TTS and background music are added
+            later). Always specify 9:16 vertical.
         duration: Clip length in seconds, integer 3-10. Default 8.
             Choose based on the shot's role in the edit:
             shorter for quick hooks or cuts, longer for payoff or

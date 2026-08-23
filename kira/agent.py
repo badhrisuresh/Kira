@@ -10,7 +10,8 @@ from .tools.image_gen import generate_image
 from .tools.video_gen import generate_video
 from .tools.concat_videos import concat_videos
 from .tools.tts import generate_voiceover
-from .tools.mux_voiceover import fit_and_mux_voiceover
+from .tools.background_music import generate_background_music
+from .tools.mux_voiceover import fit_and_mux_audio
 from .tools.youtube import upload_to_youtube
 
 MODEL = "gemini-3.5-flash"
@@ -95,7 +96,7 @@ production_planner_agent = LlmAgent(
 # ──────────────────────────────────────────────
 # Orchestrates the full production pipeline:
 #   brief → script_writer → production_planner → generate images →
-#   generate videos → concat → TTS voiceover → mux → upload → memory
+#   generate videos → concat → TTS + background music → mux → upload → memory
 
 execution_agent = LlmAgent(
     name="execution_agent",
@@ -104,8 +105,9 @@ execution_agent = LlmAgent(
         "Production agent that takes a confirmed creative brief and "
         "autonomously produces the final video: writes a script, plans "
         "shots, generates reference images, generates multi-shot video "
-        "(15-20 s), concatenates clips, generates TTS voiceover, muxes "
-        "audio, uploads to YouTube, and saves the result to memory. "
+        "(15-20 s), concatenates clips, generates TTS voiceover and "
+        "background music, muxes audio, uploads to YouTube, and saves "
+        "the result to memory. "
         "Transfer to this agent ONLY after the user has confirmed "
         "the topic and creative brief."
     ),
@@ -115,7 +117,8 @@ execution_agent = LlmAgent(
         generate_video,
         concat_videos,
         generate_voiceover,
-        fit_and_mux_voiceover,
+        generate_background_music,
+        fit_and_mux_audio,
         upload_to_youtube,
         write_memory,
     ],

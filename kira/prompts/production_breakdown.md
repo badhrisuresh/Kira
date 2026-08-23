@@ -160,19 +160,15 @@ quality.
 ### Writing Video Generation Prompts
 
 The video prompt controls how Gemini Omni Flash animates the reference
-images.
-
-Narration is added later via separate TTS. Video prompts must NOT
-include spoken voice, dialogue, or narration text — only visuals plus
-SFX / ambient sound design.
+images. **Clip audio is discarded** — background music and TTS are
+added separately in post. Video prompts are **motion and visuals only**.
 
 **Prompt template:**
 
 ```
 [Camera movement], [subject action / motion],
-[particle and atmosphere effects], [lighting changes over the shot],
-[SFX / ambient audio only — no voice, no narration].
-9:16 vertical, [duration] seconds. No speech, no voiceover.
+[particle and atmosphere effects], [lighting changes over the shot].
+9:16 vertical, [duration] seconds.
 ```
 
 **Camera movement vocabulary:**
@@ -196,20 +192,9 @@ SFX / ambient sound design.
 3. **End frame matters.** Describe exactly where the camera ends up.
    The last frame is the visual bridge to the next shot.
 
-4. **SFX / ambient audio only.** Describe beds, impacts, whooshes,
-   drones, and environmental sound — never voice. Explicitly forbid
-   speech in the prompt (e.g. `no speech, no voiceover, no narrator`).
-   Keep the shot's Narration field in the shot list for later TTS;
-   do not copy those words into the Video Prompt.
-
-   FORBIDDEN in Video Prompt (never write these):
-   - `Deep male voice narrates: "..."`
-   - `voiceover`, `narrator`, `spoken words`, `says:`, `reads:`
-   - Any quoted narration / dialogue lines
-
-   GOOD audio line:
-   - `Soft cosmic drone, distant low rumble, sparse ice-crystal ticks,
-     no speech, no voiceover`
+4. **No audio in Video Prompt.** Do not describe SFX, music, drones,
+   voice, or narration. Keep spoken words in the shot Narration field
+   and VOICEOVER PROMPT only.
 
 5. **Motion direction consistency.** If shot 1 moves camera-right,
    shot 2 should not abruptly move camera-left unless a beat change
@@ -234,17 +219,6 @@ is the hardest part and the most important.
 
 4. **Motion handoff.** If shot 1 ends pushing in, shot 2 can continue
    forward motion or open on what we were approaching.
-
-**Audio continuity (SFX / ambience only):**
-
-1. **The soundtrack is one piece.** Describe the SFX / ambient arc
-   across ALL shots (no voice):
-   - Shot 1: "Low drone begins, building slowly…"
-   - Shot 2: "Drone continues, sparse metallic ticks layer in…"
-   - Shot 3: "Drone swells, deep bass impact on final beat"
-
-2. **Leave headroom for TTS.** Keep SFX beds under the future
-   narration; avoid dense wall-to-wall noise at shot boundaries.
 
 **Transition strategies:**
 
@@ -271,14 +245,11 @@ Before returning your shot list, verify every item:
       style, "9:16 vertical", "no text overlay"
 - [ ] Style keywords are IDENTICAL across all image prompts
 - [ ] Lighting direction is consistent (or change is justified)
-- [ ] Video Prompt contains ZERO voice/narration language (reject if
-      it has "voice narrates", "voiceover", quoted spoken lines, etc.)
-- [ ] Video prompts specify: camera movement, subject action, SFX /
-      ambient audio only (no speech / voiceover / narration), duration
+- [ ] Video Prompt contains ZERO audio / voice / narration language
+- [ ] Video prompts specify: camera movement, subject action, visual
+      effects, duration (no audio descriptions)
 - [ ] Continuity notes explain the visual bridge between each pair of
       consecutive shots
-- [ ] SFX / ambient audio is described as one continuous arc across
-      all shots
 - [ ] VOICEOVER PROMPT is spoken words only (no SFX / labels)
 - [ ] VOICEOVER WORD COUNT matches ~145 WPM for TOTAL DURATION
       (slightly under is OK; never over by much)
