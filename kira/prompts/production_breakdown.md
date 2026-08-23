@@ -132,13 +132,17 @@ quality.
 The video prompt controls how Gemini Omni Flash animates the reference
 images.
 
+Narration is added later via separate TTS. Video prompts must NOT
+include spoken voice, dialogue, or narration text — only visuals plus
+SFX / ambient sound design.
+
 **Prompt template:**
 
 ```
 [Camera movement], [subject action / motion],
 [particle and atmosphere effects], [lighting changes over the shot],
-[audio description including narration].
-9:16 vertical, [duration] seconds.
+[SFX / ambient audio only — no voice, no narration].
+9:16 vertical, [duration] seconds. No speech, no voiceover.
 ```
 
 **Camera movement vocabulary:**
@@ -162,9 +166,11 @@ images.
 3. **End frame matters.** Describe exactly where the camera ends up.
    The last frame is the visual bridge to the next shot.
 
-4. **Include narration in the audio description.** The model can
-   generate native audio. Specify: `Deep male voice narrates: "[exact text]"`
-   along with the music/SFX description.
+4. **SFX / ambient audio only.** Describe beds, impacts, whooshes,
+   drones, and environmental sound — never voice. Explicitly forbid
+   speech in the prompt (e.g. `no speech, no voiceover, no narrator`).
+   Keep the shot's Narration field in the shot list for later TTS;
+   do not copy those words into the Video Prompt.
 
 5. **Motion direction consistency.** If shot 1 moves camera-right,
    shot 2 should not abruptly move camera-left unless a beat change
@@ -190,16 +196,16 @@ is the hardest part and the most important.
 4. **Motion handoff.** If shot 1 ends pushing in, shot 2 can continue
    forward motion or open on what we were approaching.
 
-**Audio continuity:**
+**Audio continuity (SFX / ambience only):**
 
-1. **The soundtrack is one piece.** Describe the audio arc across ALL
-   shots:
+1. **The soundtrack is one piece.** Describe the SFX / ambient arc
+   across ALL shots (no voice):
    - Shot 1: "Low drone begins, building slowly…"
-   - Shot 2: "Drone continues, strings layer in with rising tension…"
-   - Shot 3: "Full orchestral swell peaks, bass impact on final beat"
+   - Shot 2: "Drone continues, sparse metallic ticks layer in…"
+   - Shot 3: "Drone swells, deep bass impact on final beat"
 
-2. **Narration pacing.** Leave ~0.3 s of breathing room at shot
-   boundaries. Do not pack narration right to the clip edge.
+2. **Leave headroom for TTS.** Keep SFX beds under the future
+   narration; avoid dense wall-to-wall noise at shot boundaries.
 
 **Transition strategies:**
 
@@ -226,11 +232,13 @@ Before returning your shot list, verify every item:
       style, "9:16 vertical", "no text overlay"
 - [ ] Style keywords are IDENTICAL across all image prompts
 - [ ] Lighting direction is consistent (or change is justified)
-- [ ] Video prompts specify: camera movement, subject action, audio
-      with narration text, duration
+- [ ] Video prompts specify: camera movement, subject action, SFX /
+      ambient audio only (no speech / voiceover / narration), duration
 - [ ] Continuity notes explain the visual bridge between each pair of
       consecutive shots
-- [ ] Audio is described as one continuous arc across all shots
+- [ ] SFX / ambient audio is described as one continuous arc across
+      all shots
+- [ ] Shot-list Narration fields still carry the VO text for later TTS
 - [ ] Total narration word count is under 55 words
 - [ ] End-frame of each shot logically connects to start-frame of the
       next
