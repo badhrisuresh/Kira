@@ -79,7 +79,7 @@ production_planner_agent = LlmAgent(
     description=(
         "Video production planner. Takes a finished script and breaks it "
         "into a shot-by-shot production spec: number of shots (2-4), "
-        "each shot's duration (4/6/8 s), reference image prompts, video "
+        "each shot's duration (3-10 s), reference image prompts, video "
         "generation prompts, and continuity notes. Call this AFTER "
         "script_writer returns the script."
     ),
