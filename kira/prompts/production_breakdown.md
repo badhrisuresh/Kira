@@ -172,6 +172,15 @@ SFX / ambient sound design.
    Keep the shot's Narration field in the shot list for later TTS;
    do not copy those words into the Video Prompt.
 
+   FORBIDDEN in Video Prompt (never write these):
+   - `Deep male voice narrates: "..."`
+   - `voiceover`, `narrator`, `spoken words`, `says:`, `reads:`
+   - Any quoted narration / dialogue lines
+
+   GOOD audio line:
+   - `Soft cosmic drone, distant low rumble, sparse ice-crystal ticks,
+     no speech, no voiceover`
+
 5. **Motion direction consistency.** If shot 1 moves camera-right,
    shot 2 should not abruptly move camera-left unless a beat change
    justifies it.
@@ -232,6 +241,8 @@ Before returning your shot list, verify every item:
       style, "9:16 vertical", "no text overlay"
 - [ ] Style keywords are IDENTICAL across all image prompts
 - [ ] Lighting direction is consistent (or change is justified)
+- [ ] Video Prompt contains ZERO voice/narration language (reject if
+      it has "voice narrates", "voiceover", quoted spoken lines, etc.)
 - [ ] Video prompts specify: camera movement, subject action, SFX /
       ambient audio only (no speech / voiceover / narration), duration
 - [ ] Continuity notes explain the visual bridge between each pair of

@@ -20,6 +20,12 @@ It returns a shot-by-shot breakdown: how many shots (2-4), each shot's
 duration (3-10 seconds), reference image prompts, video prompts, and
 continuity notes. Review it and proceed.
 
+Before Phase 3: scan every Video Prompt. If any contains spoken
+narration, voiceover, "voice narrates", quoted dialogue, or similar
+voice language, rewrite that prompt to SFX/ambient only (keep motion
+and visuals). Narration belongs in the shot-list Narration field for
+later TTS — never in generate_video() prompts.
+
 ## PHASE 3 — PRODUCE SHOTS
 
 For **each shot** in the production plan, in order:
@@ -30,7 +36,7 @@ For **each shot** in the production plan, in order:
 
 2. Call generate_video() with:
    - image_urls: the reference image URLs for this shot
-   - prompt: the video prompt from the production plan
+   - prompt: the cleaned video prompt (SFX/ambient only — no speech)
    - duration: the shot's duration as an integer (3-10 seconds)
 
 3. Collect the returned video URL.
