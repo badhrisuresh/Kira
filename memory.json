@@ -1,5 +1,31 @@
 {
-  "topics": [],
+  "topics": [
+    {
+      "topic": "Black Hole Stars (MoM-BH*-1)",
+      "video_id": "",
+      "date": "2026-08-22"
+    },
+    {
+      "topic": "Ceres - The Secret Ocean Asteroid",
+      "video_id": "Qovy1-g1Xh4",
+      "date": "2026-08-22"
+    },
+    {
+      "topic": "The Beaches of Jezero Crater (Mars' Ancient Beaches)",
+      "video_id": "oN7hVfhm9kA",
+      "date": "2026-08-22"
+    },
+    {
+      "topic": "The 1-Trillion-Mile 'River of Cosmic Gas' Tilting Planets",
+      "video_id": "6MsbioE2lqM",
+      "date": "2026-08-22"
+    },
+    {
+      "topic": "The Early Universe is 4x Heavier Than We Thought",
+      "video_id": "xR9Ixl8MvdY",
+      "date": "2026-08-23"
+    }
+  ],
   "standing": [],
   "next": null
 }
