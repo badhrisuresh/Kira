@@ -9,6 +9,8 @@ from .tools.trends import search_trends
 from .tools.image_gen import generate_image
 from .tools.video_gen import generate_video
 from .tools.concat_videos import concat_videos
+from .tools.tts import generate_voiceover
+from .tools.mux_voiceover import fit_and_mux_voiceover
 from .tools.youtube import upload_to_youtube
 
 MODEL = "gemini-3.5-flash"
@@ -80,8 +82,9 @@ production_planner_agent = LlmAgent(
         "Video production planner. Takes a finished script and breaks it "
         "into a shot-by-shot production spec: number of shots (2-4), "
         "each shot's duration (3-10 s), reference image prompts, video "
-        "generation prompts, and continuity notes. Call this AFTER "
-        "script_writer returns the script."
+        "generation prompts, a single timed VOICEOVER PROMPT for TTS, "
+        "and continuity notes. Call this AFTER script_writer returns "
+        "the script."
     ),
     instruction=_load_prompt("production_breakdown.md"),
 )
@@ -92,7 +95,7 @@ production_planner_agent = LlmAgent(
 # ──────────────────────────────────────────────
 # Orchestrates the full production pipeline:
 #   brief → script_writer → production_planner → generate images →
-#   generate videos → concat → upload → memory
+#   generate videos → concat → TTS voiceover → mux → upload → memory
 
 execution_agent = LlmAgent(
     name="execution_agent",
@@ -101,8 +104,8 @@ execution_agent = LlmAgent(
         "Production agent that takes a confirmed creative brief and "
         "autonomously produces the final video: writes a script, plans "
         "shots, generates reference images, generates multi-shot video "
-        "(15-20 s), concatenates clips, uploads to YouTube, and saves "
-        "the result to memory. "
+        "(15-20 s), concatenates clips, generates TTS voiceover, muxes "
+        "audio, uploads to YouTube, and saves the result to memory. "
         "Transfer to this agent ONLY after the user has confirmed "
         "the topic and creative brief."
     ),
@@ -111,6 +114,8 @@ execution_agent = LlmAgent(
         generate_image,
         generate_video,
         concat_videos,
+        generate_voiceover,
+        fit_and_mux_voiceover,
         upload_to_youtube,
         write_memory,
     ],

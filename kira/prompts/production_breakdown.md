@@ -18,6 +18,11 @@ NUMBER OF SHOTS: [2-4]
 GLOBAL STYLE: [style keywords applied to EVERY image prompt]
 COLOUR PALETTE: [2-3 anchor colours used across all shots]
 LIGHT DIRECTION: [consistent primary light source description]
+VOICEOVER PROMPT: "[full spoken narration for the whole Short — all
+  shot narrations joined in order as one continuous script. Spoken
+  words only. No SFX notes, no shot labels, no stage directions.]"
+VOICEOVER WORD COUNT: [N]
+TARGET WPM: [~140-150 for TOTAL DURATION — see timing rules]
 
 ---
 
@@ -68,6 +73,31 @@ How to choose:
 - Multiple distinct locations? More shots (3-4).
 - Single continuous scene? Fewer shots (2).
 - Emotional build? Short-to-long progression (4 → 6 → 8).
+
+### Voiceover Timing (TTS)
+
+Narration is generated later as ONE full-video TTS pass
+(fal gemini-3.1-flash-tts). Plan words so spoken length ≈ video length.
+
+Target ~**145 words per minute** (calm documentary pace):
+
+| Total duration | Target word count |
+|----------------|-------------------|
+| 15 s           | ~36 words         |
+| 16 s           | ~39 words         |
+| 18 s           | ~44 words         |
+| 20 s           | ~48 words         |
+
+Rules:
+1. VOICEOVER PROMPT = all shot Narration lines joined in order, as one
+   continuous paragraph (or short sentences). Spoken words ONLY.
+2. Per-shot Narration must fit that shot's duration at ~145 WPM
+   (e.g. a 6 s shot ≈ 14–15 words max).
+3. Prefer slightly UNDER the target word count — a bit of silence is
+   better than rushing. Stay under 55 words total.
+4. After video concat, the pipeline will speed/slow the TTS audio to
+   match exact video duration. Your job is to get close via WPM so
+   speed adjustment stays mild.
 
 ### Writing Reference Image Prompts
 
@@ -249,7 +279,10 @@ Before returning your shot list, verify every item:
       consecutive shots
 - [ ] SFX / ambient audio is described as one continuous arc across
       all shots
-- [ ] Shot-list Narration fields still carry the VO text for later TTS
-- [ ] Total narration word count is under 55 words
+- [ ] VOICEOVER PROMPT is spoken words only (no SFX / labels)
+- [ ] VOICEOVER WORD COUNT matches ~145 WPM for TOTAL DURATION
+      (slightly under is OK; never over by much)
+- [ ] Each shot's Narration word count fits that shot's duration
+- [ ] Shot Narration lines concatenate cleanly into VOICEOVER PROMPT
 - [ ] End-frame of each shot logically connects to start-frame of the
       next

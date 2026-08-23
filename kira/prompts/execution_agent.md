@@ -17,14 +17,15 @@ audio design, title, and description. Review it and proceed.
 Call **production_planner()** with the complete script from Phase 1.
 
 It returns a shot-by-shot breakdown: how many shots (2-4), each shot's
-duration (3-10 seconds), reference image prompts, video prompts, and
-continuity notes. Review it and proceed.
+duration (3-10 seconds), reference image prompts, video prompts,
+continuity notes, and a single VOICEOVER PROMPT sized for the total
+duration. Review it and proceed.
 
 Before Phase 3: scan every Video Prompt. If any contains spoken
 narration, voiceover, "voice narrates", quoted dialogue, or similar
 voice language, rewrite that prompt to SFX/ambient only (keep motion
-and visuals). Narration belongs in the shot-list Narration field for
-later TTS — never in generate_video() prompts.
+and visuals). Narration belongs in the shot-list Narration field and
+VOICEOVER PROMPT for TTS — never in generate_video() prompts.
 
 ## PHASE 3 — PRODUCE SHOTS
 
@@ -43,29 +44,42 @@ For **each shot** in the production plan, in order:
 
 Repeat for every shot. You will end up with 2-4 video URLs.
 
-## PHASE 4 — ASSEMBLE
+## PHASE 4 — ASSEMBLE VIDEO
 
 Call concat_videos() with the list of video URLs in shot order.
-It returns a local file path of the concatenated final video.
+It returns a local file path of the concatenated video.
 
 If you only have ONE shot (rare), skip concat and use the single video
-URL directly.
+URL / downloaded path directly.
 
-## PHASE 5 — UPLOAD
+## PHASE 5 — VOICEOVER
+
+1. Call generate_voiceover() with the VOICEOVER PROMPT from the
+   production plan (full narration only — the spoken words, nothing
+   else).
+
+2. Call fit_and_mux_voiceover() with:
+   - video_path: the concatenated video path from Phase 4
+   - audio_url: the MP3 URL from generate_voiceover()
+
+   This speeds or slows the TTS to match the video duration, then mixes
+   it over the SFX bed. Use the returned path as the final video.
+
+## PHASE 6 — UPLOAD
 
 Call upload_to_youtube() with:
-- video_url: the file path from Phase 4 (or the single video URL)
+- video_url: the file path from Phase 5 (muxed video)
 - title: from the script (must include #Shorts)
 - description: from the script (include source citation and hashtags)
 
-## PHASE 6 — MEMORY
+## PHASE 7 — MEMORY
 
 Call write_memory() with:
 - topic: the topic from the brief
-- video_id: the YouTube video ID from Phase 5
+- video_id: the YouTube video ID from Phase 6
 - clear_next: True (if a one-time instruction was consumed)
 
-## PHASE 7 — REPORT
+## PHASE 8 — REPORT
 
 Tell the user:
 - Topic and why it was chosen

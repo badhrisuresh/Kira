@@ -124,7 +124,8 @@ TENSION
 7. **Authority tone.** Confident, not lecturing. A smart friend telling
    you something wild — not a textbook.
 8. **Total word count.** Stay under 55 spoken words for the entire
-   script. Silence and visuals carry more weight than words.
+   script. Aim for ~145 WPM against the planned duration (e.g. ~44
+   words for an 18 s Short) so later TTS length matches the cut.
 
 ### Visual Storytelling Principles
 
