@@ -18,6 +18,23 @@ def probe_duration(path: str) -> float:
     return float(result.stdout.strip())
 
 
+def probe_dimensions(path: str) -> tuple[int, int]:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    width_str, height_str = result.stdout.strip().split("x")
+    return int(width_str), int(height_str)
+
+
 def tempo_for_duration(source_dur: float, target_dur: float) -> float:
     """Return atempo factor to fit source audio into target duration."""
     if target_dur <= 0:
