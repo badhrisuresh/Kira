@@ -69,10 +69,13 @@ URL / downloaded path directly.
    - video_path: the concatenated video path from Phase 4
    - voiceover_url: the MP3 URL from generate_voiceover()
    - music_url: the MP3 URL from generate_background_music()
+   - script: the exact same VOICEOVER PROMPT text passed to
+     generate_voiceover() in step 1 — used to snap burned-in captions
+     to the approved narration instead of raw speech-to-text.
 
    This discards clip audio, speed-fits TTS and music to the video
-   duration, and mixes them (VO dominant, music quiet). Use the
-   returned path as the final video.
+   duration, burns in synced captions, and mixes the audio (VO
+   dominant, music quiet). Use the returned path as the final video.
 
 ## PHASE 6 — UPLOAD
 

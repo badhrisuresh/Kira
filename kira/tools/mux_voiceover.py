@@ -10,7 +10,12 @@ from .audio_utils import (
     probe_duration,
     tempo_for_duration,
 )
-from .captions import group_into_captions, transcribe_words, write_ass_file
+from .captions import (
+    group_into_captions,
+    reconcile_with_script,
+    transcribe_words,
+    write_ass_file,
+)
 
 # Mix levels: VO dominant, music as quiet bed underneath.
 _MUSIC_VOLUME = 0.18
@@ -21,6 +26,7 @@ def fit_and_mux_audio(
     video_path: str,
     voiceover_url: str,
     music_url: str,
+    script: str = "",
 ) -> str:
     """Discard video-clip audio, fit TTS + background music to video
     length, burn in captions synced to the voiceover, and mux into the
@@ -34,6 +40,12 @@ def fit_and_mux_audio(
             from the caller's perspective — any clip audio is ignored).
         voiceover_url: TTS MP3 URL (from generate_voiceover).
         music_url: Background music MP3 URL (from generate_background_music).
+        script: The exact narration text passed to generate_voiceover().
+            When given, captions are snapped to this text (word timing
+            still comes from the audio) instead of raw speech-to-text,
+            so captions always match the approved script even if the
+            transcription mishears a word. Optional but recommended —
+            pass the same VOICEOVER PROMPT text used to generate the VO.
 
     Returns: Local path to the final mp4. Pass to upload_to_youtube()."""
     vo_path = f"/tmp/kira_vo_{uuid.uuid4().hex[:6]}.mp3"
@@ -58,6 +70,8 @@ def fit_and_mux_audio(
     has_captions = False
     try:
         words = transcribe_words(vo_path)
+        if script:
+            words = reconcile_with_script(words, script)
         captions = group_into_captions(words)
         if captions:
             width, height = probe_dimensions(video_path)

@@ -7,9 +7,14 @@ timestamps), grouped into short on-screen chunks, and rendered as an ASS
 subtitle file for ffmpeg's `ass` filter to burn in.
 """
 
+import difflib
 import re
 
 import fal_client
+
+
+def _normalize(word: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", word.lower())
 
 
 def transcribe_words(audio_path: str) -> list[dict]:
@@ -38,6 +43,60 @@ def transcribe_words(audio_path: str) -> list[dict]:
             continue
         words.append({"text": text, "start": float(ts[0]), "end": float(ts[1])})
     return words
+
+
+def reconcile_with_script(words: list[dict], script: str) -> list[dict]:
+    """Snap ASR words to the known narration script, keeping ASR timing
+    but guaranteeing captions show exactly the approved script text —
+    a word-level forced alignment isn't available on fal.ai, so this
+    aligns Whisper's transcript to the ground-truth script text via
+    sequence matching instead of trusting its (possibly misheard) words.
+
+    Falls back to the raw ASR words if there's nothing to align against.
+    """
+    script_tokens = re.findall(r"\S+", script)
+    if not script_tokens or not words:
+        return words
+
+    asr_norm = [_normalize(w["text"]) for w in words]
+    script_norm = [_normalize(w) for w in script_tokens]
+
+    matcher = difflib.SequenceMatcher(None, asr_norm, script_norm, autojunk=False)
+    aligned: list[dict] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                w = words[i1 + offset]
+                aligned.append({
+                    "text": script_tokens[j1 + offset],
+                    "start": w["start"],
+                    "end": w["end"],
+                })
+        elif tag == "replace":
+            # Different word counts on each side (ASR merged/split a
+            # word) — spread the ASR segment's time span evenly across
+            # the script's words instead of dropping the mismatch.
+            span_start = words[i1]["start"]
+            span_end = words[i2 - 1]["end"]
+            count = j2 - j1
+            step = (span_end - span_start) / count if span_end > span_start else 0.0
+            for k in range(count):
+                aligned.append({
+                    "text": script_tokens[j1 + k],
+                    "start": span_start + step * k,
+                    "end": span_start + step * (k + 1) if step else span_end,
+                })
+        elif tag == "insert":
+            # Script has words ASR didn't hear at all — anchor them to
+            # the last known timestamp so they still appear in place.
+            anchor = aligned[-1]["end"] if aligned else words[min(i1, len(words) - 1)]["start"]
+            for tok in script_tokens[j1:j2]:
+                aligned.append({"text": tok, "start": anchor, "end": anchor})
+        # tag == "delete": ASR heard extra words (fillers, stutters) not
+        # in the script — drop them, the script is the source of truth.
+
+    return aligned or words
 
 
 def group_into_captions(
