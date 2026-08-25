@@ -394,6 +394,7 @@ body {
 }
 
 .phase-label {
+  flex: 1;
   font-size: 13px;
   color: var(--white-50);
   transition: color var(--transition);
@@ -401,6 +402,47 @@ body {
 
 .phase-label.active { color: var(--white-90); font-weight: 500; }
 .phase-label.done { color: var(--white-50); }
+
+.phase-thumb-wrap { flex-shrink: 0; }
+.phase-thumb-wrap.hidden { display: none; }
+
+.phase-thumb {
+  display: block;
+  width: 48px;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--white-20);
+  cursor: zoom-in;
+  transition: transform var(--transition), border-color var(--transition);
+}
+
+.phase-thumb:hover { transform: scale(1.06); border-color: var(--white-50); }
+
+.preview-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  cursor: zoom-out;
+  padding: 24px;
+}
+
+.preview-modal.hidden { display: none; }
+
+.preview-modal img,
+.preview-modal video {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  cursor: default;
+}
 
 .prod-note {
   font-size: 13px;
@@ -843,6 +885,12 @@ body {
   </div>
 </div>
 
+<!-- Preview Modal -->
+<div class="preview-modal hidden" id="previewModal" onclick="closePreview()">
+  <img id="previewImg" class="hidden">
+  <video id="previewVideo" class="hidden" controls autoplay muted playsinline></video>
+</div>
+
 <script>
 const API = '';
 let selectedIdx = -1;
@@ -961,6 +1009,10 @@ const PHASES = [
   ['memory', 'Saving to memory'],
 ];
 
+// Phases whose SSE preview_url is a reference image / video clip worth
+// showing as a thumbnail (as opposed to e.g. the final YouTube link).
+const THUMB_PHASES = new Set(['image_gen', 'video_gen']);
+
 function buildPhaseList() {
   const container = document.getElementById('prodPhases');
   container.innerHTML = '';
@@ -971,9 +1023,54 @@ function buildPhaseList() {
     div.innerHTML = `
       <div class="phase-dot" id="dot-${id}"></div>
       <div class="phase-label" id="label-${id}">${label}</div>
+      <div class="phase-thumb-wrap hidden" id="thumbwrap-${id}"></div>
     `;
     container.appendChild(div);
   });
+}
+
+function setPhaseThumb(phaseId, url) {
+  if (!THUMB_PHASES.has(phaseId) || !url) return;
+  const wrap = document.getElementById(`thumbwrap-${phaseId}`);
+  if (!wrap) return;
+  const urlLower = url.toLowerCase();
+  const isVideo = ['.mp4', '.webm', '.mov'].some(ext => urlLower.includes(ext));
+  wrap.innerHTML = '';
+  const el = document.createElement(isVideo ? 'video' : 'img');
+  el.className = 'phase-thumb';
+  el.src = url;
+  if (isVideo) {
+    el.muted = true;
+    el.preload = 'metadata';
+    el.playsInline = true;
+  }
+  el.addEventListener('click', () => openPreview(url, isVideo));
+  wrap.appendChild(el);
+  wrap.classList.remove('hidden');
+}
+
+function openPreview(url, isVideo) {
+  const modal = document.getElementById('previewModal');
+  const img = document.getElementById('previewImg');
+  const vid = document.getElementById('previewVideo');
+  if (isVideo) {
+    vid.src = url;
+    vid.classList.remove('hidden');
+    img.classList.add('hidden');
+  } else {
+    vid.pause();
+    vid.removeAttribute('src');
+    img.src = url;
+    img.classList.remove('hidden');
+    vid.classList.add('hidden');
+  }
+  modal.classList.remove('hidden');
+}
+
+function closePreview() {
+  document.getElementById('previewModal').classList.add('hidden');
+  const vid = document.getElementById('previewVideo');
+  vid.pause();
 }
 
 function showProgressBar() {
@@ -1025,6 +1122,7 @@ function connectSSE() {
       dot.className = 'phase-dot done';
       label.className = 'phase-label done';
       if (row) row.className = 'prod-phase';
+      setPhaseThumb(data.phase, data.preview_url);
       completedCount++;
       updateProgress(completedCount);
     }
@@ -1059,8 +1157,15 @@ async function pollStatus() {
           const dot = document.getElementById(`dot-${p.phase}`);
           const label = document.getElementById(`label-${p.phase}`);
           if (!dot) return;
-          if (p.status === 'completed') { dot.className = 'phase-dot done'; label.className = 'phase-label done'; done++; }
-          else if (p.status === 'in_progress') { dot.className = 'phase-dot active'; label.className = 'phase-label active'; }
+          if (p.status === 'completed') {
+            dot.className = 'phase-dot done';
+            label.className = 'phase-label done';
+            setPhaseThumb(p.phase, p.preview_url);
+            done++;
+          } else if (p.status === 'in_progress') {
+            dot.className = 'phase-dot active';
+            label.className = 'phase-label active';
+          }
         });
         updateProgress(done);
       }
@@ -1201,8 +1306,15 @@ async function init() {
           const dot = document.getElementById(`dot-${p.phase}`);
           const label = document.getElementById(`label-${p.phase}`);
           if (!dot) return;
-          if (p.status === 'completed') { dot.className = 'phase-dot done'; label.className = 'phase-label done'; done++; }
-          else if (p.status === 'in_progress') { dot.className = 'phase-dot active'; label.className = 'phase-label active'; }
+          if (p.status === 'completed') {
+            dot.className = 'phase-dot done';
+            label.className = 'phase-label done';
+            setPhaseThumb(p.phase, p.preview_url);
+            done++;
+          } else if (p.status === 'in_progress') {
+            dot.className = 'phase-dot active';
+            label.className = 'phase-label active';
+          }
         });
         updateProgress(done);
       }
