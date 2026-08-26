@@ -2,7 +2,11 @@ import json
 import os
 from datetime import date
 
+from .. import storage
+
 MEMORY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "memory.json")
+
+_DEFAULT_MEMORY = {"topics": [], "standing": [], "next": None}
 
 
 def read_memory() -> dict:
@@ -11,10 +15,21 @@ def read_memory() -> dict:
     Returns a dict with keys: topics (list of past posts with topic,
     video_id, date), standing (list of permanent rules), next (one-time
     topic request or None)."""
+    if storage.is_enabled():
+        return storage.read_json(dict(_DEFAULT_MEMORY))
     if not os.path.exists(MEMORY_PATH):
-        return {"topics": [], "standing": [], "next": None}
+        return dict(_DEFAULT_MEMORY)
     with open(MEMORY_PATH) as f:
         return json.load(f)
+
+
+def save_memory(memory: dict) -> None:
+    """Persist a full memory dict, routing to GCS when configured."""
+    if storage.is_enabled():
+        storage.write_json(memory)
+    else:
+        with open(MEMORY_PATH, "w") as f:
+            json.dump(memory, f, indent=2)
 
 
 def write_memory(
@@ -49,7 +64,6 @@ def write_memory(
     if clear_next:
         memory["next"] = None
 
-    with open(MEMORY_PATH, "w") as f:
-        json.dump(memory, f, indent=2)
+    save_memory(memory)
 
     return "Memory updated successfully."

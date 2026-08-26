@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+google-adk
+google-genai
+fal-client
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+pytrends
+requests
+google-cloud-storage

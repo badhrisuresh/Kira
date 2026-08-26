@@ -29,7 +29,7 @@ from google.genai import types as genai_types
 
 from .agent import root_agent
 from .events import event_bus, ProductionEvent
-from .tools.memory import read_memory, write_memory
+from .tools.memory import read_memory, save_memory, write_memory
 
 logger = logging.getLogger(__name__)
 
@@ -712,10 +712,7 @@ async def remove_taste(index: int):
     if 0 <= index < len(standing):
         removed = standing.pop(index)
         memory["standing"] = standing
-        import json
-        from .tools.memory import MEMORY_PATH
-        with open(MEMORY_PATH, "w") as f:
-            json.dump(memory, f, indent=2)
+        save_memory(memory)
         return {"status": "ok", "removed": removed}
     return JSONResponse({"error": "Invalid index."}, status_code=404)
 
