@@ -1,6 +1,5 @@
 import fal_client
 
-# Fixed voice / delivery — only the spoken prompt varies per video.
 _DEFAULT_VOICE = "Kore"
 _DEFAULT_STYLE = (
     "Clear, warm female voice with a calm, confident, measured delivery. "
@@ -8,6 +7,13 @@ _DEFAULT_STYLE = (
     "or Discovery science documentaries—intelligent, immersive, and "
     "quietly captivating."
 )
+
+_active_style = _DEFAULT_STYLE
+
+
+def configure(voice_style: str):
+    global _active_style
+    _active_style = voice_style or _DEFAULT_STYLE
 
 
 def generate_voiceover(prompt: str) -> str:
@@ -30,7 +36,7 @@ def generate_voiceover(prompt: str) -> str:
             "temperature": 1,
             "language_code": "English (US)",
             "output_format": "mp3",
-            "style_instructions": _DEFAULT_STYLE,
+            "style_instructions": _active_style,
         },
         with_logs=True,
         on_queue_update=lambda update: None,

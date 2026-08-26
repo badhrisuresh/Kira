@@ -119,3 +119,42 @@ def fit_and_mux_audio(
     if os.path.exists(ass_path):
         os.remove(ass_path)
     return output_path
+
+
+def mux_music_only(video_path: str, music_url: str) -> str:
+    """Add background music to a video without voiceover or captions.
+
+    Used when narration is disabled for a content block. Discards any
+    clip audio, speed-fits the music to the video duration, and mixes.
+
+    Args:
+        video_path: Local path to the concatenated video.
+        music_url: Background music MP3 URL (from generate_background_music).
+
+    Returns: Local path to the final mp4."""
+    music_path = f"/tmp/kira_music_{uuid.uuid4().hex[:6]}.mp3"
+    download(music_url, music_path)
+
+    video_dur = probe_duration(video_path)
+    music_tempo = tempo_for_duration(probe_duration(music_path), video_dur)
+    music_atempo = atempo_filter_chain(music_tempo)
+    output_path = f"/tmp/kira_final_mux_{uuid.uuid4().hex[:6]}.mp4"
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", music_path,
+            "-filter_complex",
+            f"[1:a]{music_atempo},volume={_MUSIC_VOLUME}[a]",
+            "-map", "0:v:0", "-c:v", "copy",
+            "-map", "[a]", "-c:a", "aac",
+            "-shortest",
+            output_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    os.remove(music_path)
+    return output_path

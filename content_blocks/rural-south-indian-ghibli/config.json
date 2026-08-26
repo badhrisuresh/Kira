@@ -1,0 +1,19 @@
+{
+  "id": "rural-south-indian-ghibli",
+  "name": "Rural South Indian Ghibli",
+  "description": "pleasant relaxing and soothing south indian family going about their morning routine - waking up, farming, cooking , eating",
+  "style": "Studio Ghibli animation",
+  "duration_min": 16,
+  "duration_max": 20,
+  "example_topics": [
+    "family preparing a feast - for a festival (Pongal)"
+  ],
+  "narration_enabled": false,
+  "captions_enabled": false,
+  "youtube_trends_enabled": false,
+  "seed_keywords": [],
+  "noise_terms": [],
+  "voice_style": "Narration is disabled for the 'Rural South Indian Ghibli' block. This field is for future reference only if narration were enabled.",
+  "music_style": "{duration} second, A warm, gentle, and melodic instrumental score, inspired by Studio Ghibli films and traditional South Indian folk music. Features instruments like flutes, soft strings, and subtle, earthy percussion. Evokes feelings of peace, nostalgia, and the simple beauty of daily life. no vocals, no lyrics.",
+  "created_at": "2026-08-26T05:47:18.047753+00:00"
+}
