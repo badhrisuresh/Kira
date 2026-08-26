@@ -4,11 +4,18 @@ import fal_client
 
 from .audio_utils import probe_duration
 
-_MUSIC_TEMPLATE = (
+_DEFAULT_MUSIC_TEMPLATE = (
     "{duration} second Subtle, atmospheric ambient music with deep, warm drones, "
     "soft celestial textures, and a slow evolving pulse. Minimal and unobtrusive, "
     "leaving plenty of space for a clear cinematic voice-over., no vocals, no lyrics."
 )
+
+_active_template = _DEFAULT_MUSIC_TEMPLATE
+
+
+def configure(music_style: str):
+    global _active_template
+    _active_template = music_style or _DEFAULT_MUSIC_TEMPLATE
 _NEGATIVE_PROMPT = (
     "vocals, speech, clipping, distortion, harsh noise, muddy mix, low quality"
 )
@@ -29,7 +36,7 @@ def generate_background_music(video_path: str) -> str:
         along with the TTS URL."""
     duration = probe_duration(video_path)
     duration_int = max(3, round(duration))
-    prompt = _MUSIC_TEMPLATE.format(duration=duration_int)
+    prompt = _active_template.format(duration=duration_int)
     seed = random.randint(0, 2_147_483_647)
 
     result = fal_client.subscribe(

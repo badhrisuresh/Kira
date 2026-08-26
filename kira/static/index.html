@@ -54,7 +54,6 @@ body {
   100% { filter: hue-rotate(15deg); }
 }
 
-/* Subtle star field */
 .bg-stars {
   position: fixed;
   inset: 0;
@@ -89,17 +88,8 @@ body {
   padding: 20px 32px;
 }
 
-.topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
 
 .icon-btn {
   width: 36px;
@@ -119,6 +109,306 @@ body {
 
 .icon-btn:hover { background: var(--white-20); color: var(--white); }
 .icon-btn.active { background: var(--accent); color: var(--white); border-color: var(--accent); }
+
+/* ── Block Selector ───────────────────────────────────── */
+.block-selector { position: relative; }
+
+.block-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--white-20);
+  background: var(--white-10);
+  color: var(--white-90);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+  backdrop-filter: blur(10px);
+  max-width: 280px;
+}
+
+.block-current:hover { background: var(--white-20); border-color: var(--white-50); }
+.block-current .chevron { font-size: 10px; color: var(--white-50); transition: transform var(--transition); }
+.block-current.open .chevron { transform: rotate(180deg); }
+
+.block-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  background: rgba(20,20,30,0.95);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid var(--white-20);
+  border-radius: 14px;
+  padding: 6px;
+  z-index: 50;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+.block-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--transition);
+  font-size: 13px;
+  color: var(--white-70);
+}
+
+.block-item:hover { background: var(--white-10); }
+.block-item.active { color: var(--accent-light); font-weight: 600; }
+
+.block-item .block-delete {
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--transition);
+}
+
+.block-item:hover .block-delete { opacity: 1; }
+
+.block-divider {
+  height: 1px;
+  background: var(--white-10);
+  margin: 4px 8px;
+}
+
+.block-create-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-light);
+  transition: background var(--transition);
+}
+
+.block-create-item:hover { background: var(--white-10); }
+.block-create-item .plus { font-size: 16px; font-weight: 700; }
+
+/* ── Create Block Modal ───────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal {
+  background: rgba(20,20,30,0.98);
+  border: 1px solid var(--white-20);
+  border-radius: 20px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+.modal-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--white-90);
+  margin-bottom: 4px;
+}
+
+.modal-sub {
+  font-size: 14px;
+  color: var(--white-50);
+  margin-bottom: 28px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--white-50);
+  margin-bottom: 8px;
+}
+
+.form-input, .form-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--white-20);
+  background: var(--white-10);
+  color: var(--white);
+  font-size: 14px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.form-input:focus, .form-textarea:focus { border-color: var(--accent); }
+.form-input::placeholder, .form-textarea::placeholder { color: var(--white-50); }
+.form-textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+
+/* Duration slider */
+.slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.slider-wrap input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--white-20);
+  outline: none;
+}
+
+.slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--white);
+}
+
+.slider-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--white-90);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Checkboxes */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--white-70);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.conditional-field {
+  margin-top: 12px;
+  padding-left: 26px;
+}
+
+/* Modal buttons */
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.modal-btn-primary {
+  flex: 1;
+  padding: 14px 24px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+  color: var(--white);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: 0 4px 24px rgba(108,92,231,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.modal-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 32px rgba(108,92,231,0.5); }
+.modal-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.modal-btn-secondary {
+  padding: 14px 24px;
+  border-radius: 12px;
+  border: 1px solid var(--white-20);
+  background: transparent;
+  color: var(--white-70);
+  font-size: 15px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.modal-btn-secondary:hover { background: var(--white-10); color: var(--white); }
+
+.modal-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: var(--white);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  padding: 12px 24px;
+  border-radius: 12px;
+  background: var(--green);
+  color: var(--dark);
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 300;
+  transition: transform 300ms ease;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.toast.show { transform: translateX(-50%) translateY(0); }
 
 /* ── Hero Section ──────────────────────────────────────── */
 .hero {
@@ -150,7 +440,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* ── CTA Button (Idle State) ───────────────────────────── */
+/* ── CTA Button ───────────────────────────────────────── */
 .cta-btn {
   padding: 16px 40px;
   border-radius: 50px;
@@ -188,11 +478,7 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
-
-.loading-text {
-  font-size: 15px;
-  color: var(--white-50);
-}
+.loading-text { font-size: 15px; color: var(--white-50); }
 
 /* ── Topic Cards ───────────────────────────────────────── */
 .cards-container {
@@ -291,7 +577,7 @@ body {
   overflow: hidden;
 }
 
-/* ── Make It Bar (appears after selection) ──────────────── */
+/* ── Make It Bar ──────────────────────────────────────── */
 .make-bar {
   display: flex;
   align-items: center;
@@ -350,40 +636,17 @@ body {
   width: 100%;
 }
 
-.prod-topic {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--white-90);
-  letter-spacing: -0.3px;
-}
+.prod-topic { font-size: 22px; font-weight: 700; color: var(--white-90); letter-spacing: -0.3px; }
 
-.prod-phases {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+.prod-phases { width: 100%; display: flex; flex-direction: column; gap: 2px; }
 
-.prod-phase {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  transition: background var(--transition);
-}
-
+.prod-phase { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 10px; transition: background var(--transition); }
 .prod-phase.active { background: var(--white-10); }
 
 .phase-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--white-20);
-  transition: all var(--transition);
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--white-20); transition: all var(--transition);
 }
-
 .phase-dot.active { background: var(--accent-light); animation: pulse 1.5s ease infinite; }
 .phase-dot.done { background: var(--green); }
 .phase-dot.error { background: var(--red); }
@@ -393,13 +656,7 @@ body {
   50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(162,155,254,0); }
 }
 
-.phase-label {
-  flex: 1;
-  font-size: 13px;
-  color: var(--white-50);
-  transition: color var(--transition);
-}
-
+.phase-label { flex: 1; font-size: 13px; color: var(--white-50); transition: color var(--transition); }
 .phase-label.active { color: var(--white-90); font-weight: 500; }
 .phase-label.done { color: var(--white-50); }
 
@@ -407,70 +664,36 @@ body {
 .phase-thumb-wrap.hidden { display: none; }
 
 .phase-thumb {
-  display: block;
-  width: 48px;
-  height: 86px;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--white-20);
-  cursor: zoom-in;
+  display: block; width: 48px; height: 86px; object-fit: cover; border-radius: 6px;
+  border: 1px solid var(--white-20); cursor: zoom-in;
   transition: transform var(--transition), border-color var(--transition);
 }
-
 .phase-thumb:hover { transform: scale(1.06); border-color: var(--white-50); }
 
 .preview-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  cursor: zoom-out;
-  padding: 24px;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; cursor: zoom-out; padding: 24px;
 }
-
 .preview-modal.hidden { display: none; }
-
-.preview-modal img,
-.preview-modal video {
-  max-width: 90vw;
-  max-height: 90vh;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-  cursor: default;
+.preview-modal img, .preview-modal video {
+  max-width: 90vw; max-height: 90vh; border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5); cursor: default;
 }
 
 .prod-note {
-  font-size: 13px;
-  color: var(--white-50);
-  background: var(--white-10);
-  padding: 10px 20px;
-  border-radius: 50px;
-  backdrop-filter: blur(10px);
+  font-size: 13px; color: var(--white-50); background: var(--white-10);
+  padding: 10px 20px; border-radius: 50px; backdrop-filter: blur(10px);
 }
 
 /* ── Done State ────────────────────────────────────────── */
-.done-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
+.done-state { display: flex; flex-direction: column; align-items: center; gap: 16px; }
 
 .done-check {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--green-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  color: var(--green);
+  width: 56px; height: 56px; border-radius: 50%; background: var(--green-bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; color: var(--green);
   animation: scaleIn 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -479,290 +702,137 @@ body {
   to { transform: scale(1); opacity: 1; }
 }
 
-.done-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--white-90);
-}
-
-.done-sub {
-  font-size: 14px;
-  color: var(--white-50);
-}
-
-.done-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 8px;
-}
+.done-title { font-size: 24px; font-weight: 700; color: var(--white-90); }
+.done-sub { font-size: 14px; color: var(--white-50); }
+.done-actions { display: flex; gap: 12px; margin-top: 8px; }
 
 .yt-btn {
-  padding: 12px 28px;
-  border-radius: 50px;
-  border: none;
-  background: var(--white);
-  color: var(--dark);
-  font-size: 14px;
-  font-weight: 600;
-  font-family: var(--font);
-  text-decoration: none;
-  cursor: pointer;
-  transition: all var(--transition);
+  padding: 12px 28px; border-radius: 50px; border: none;
+  background: var(--white); color: var(--dark); font-size: 14px;
+  font-weight: 600; font-family: var(--font); text-decoration: none;
+  cursor: pointer; transition: all var(--transition);
 }
-
 .yt-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 
 /* ── Error State ───────────────────────────────────────── */
-.error-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
+.error-state { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 
 .error-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--red-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  color: var(--red);
+  width: 48px; height: 48px; border-radius: 50%; background: var(--red-bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; color: var(--red);
 }
 
 .error-msg {
-  font-size: 14px;
-  color: var(--red);
-  max-width: 400px;
-  text-align: center;
-  line-height: 1.4;
+  font-size: 14px; color: var(--red); max-width: 400px;
+  text-align: center; line-height: 1.4;
 }
 
-/* ── Side Panel (Taste + History) ──────────────────────── */
+/* ── Side Panel ──────────────────────────────────────── */
 .panel-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: 100;
-  opacity: 0;
-  pointer-events: none;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 100; opacity: 0; pointer-events: none;
   transition: opacity var(--transition);
 }
-
 .panel-overlay.open { opacity: 1; pointer-events: all; }
 
 .side-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 380px;
-  max-width: 90vw;
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 380px; max-width: 90vw;
   background: rgba(20,20,30,0.95);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  border-left: 1px solid var(--white-10);
-  z-index: 101;
+  backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
+  border-left: 1px solid var(--white-10); z-index: 101;
   transform: translateX(100%);
   transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+  display: flex; flex-direction: column; overflow-y: auto;
 }
-
 .side-panel.open { transform: translateX(0); }
 
 .panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--white-10);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px; border-bottom: 1px solid var(--white-10);
 }
-
-.panel-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--white-90);
-}
+.panel-title { font-size: 16px; font-weight: 700; color: var(--white-90); }
 
 .panel-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: var(--white-10);
-  color: var(--white-70);
-  cursor: pointer;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 32px; height: 32px; border-radius: 50%; border: none;
+  background: var(--white-10); color: var(--white-70); cursor: pointer;
+  font-size: 16px; display: flex; align-items: center; justify-content: center;
   transition: all var(--transition);
 }
-
 .panel-close:hover { background: var(--white-20); }
 
-.panel-section {
-  padding: 20px 24px;
-}
-
-.panel-section + .panel-section {
-  border-top: 1px solid var(--white-10);
-}
+.panel-section { padding: 20px 24px; }
+.panel-section + .panel-section { border-top: 1px solid var(--white-10); }
 
 .section-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--white-50);
-  margin-bottom: 14px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--white-50); margin-bottom: 14px;
 }
 
-/* Taste tags */
-.taste-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
+.taste-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 
 .taste-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 20px;
-  background: var(--white-10);
-  border: 1px solid var(--white-10);
-  color: var(--white-70);
-  font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px;
+  background: var(--white-10); border: 1px solid var(--white-10);
+  color: var(--white-70); font-size: 13px;
 }
-
-.taste-tag .remove {
-  cursor: pointer;
-  opacity: 0.5;
-  transition: opacity var(--transition);
-}
-
+.taste-tag .remove { cursor: pointer; opacity: 0.5; transition: opacity var(--transition); }
 .taste-tag .remove:hover { opacity: 1; }
 
-.taste-empty {
-  font-size: 13px;
-  color: var(--white-50);
-  font-style: italic;
-  margin-bottom: 14px;
-}
-
-.taste-input-row {
-  display: flex;
-  gap: 8px;
-}
+.taste-empty { font-size: 13px; color: var(--white-50); font-style: italic; margin-bottom: 14px; }
+.taste-input-row { display: flex; gap: 8px; }
 
 .taste-input {
-  flex: 1;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--white-10);
-  background: var(--white-10);
-  color: var(--white);
-  font-size: 13px;
-  font-family: var(--font);
-  outline: none;
-  transition: border-color var(--transition);
+  flex: 1; padding: 8px 14px; border-radius: 10px;
+  border: 1px solid var(--white-10); background: var(--white-10);
+  color: var(--white); font-size: 13px; font-family: var(--font);
+  outline: none; transition: border-color var(--transition);
 }
-
 .taste-input:focus { border-color: var(--accent); }
 .taste-input::placeholder { color: var(--white-50); }
 
 .taste-add-btn {
-  padding: 8px 16px;
-  border-radius: 10px;
-  border: 1px solid var(--white-20);
-  background: transparent;
-  color: var(--white-70);
-  font-size: 13px;
-  font-family: var(--font);
-  cursor: pointer;
-  transition: all var(--transition);
+  padding: 8px 16px; border-radius: 10px; border: 1px solid var(--white-20);
+  background: transparent; color: var(--white-70); font-size: 13px;
+  font-family: var(--font); cursor: pointer; transition: all var(--transition);
 }
-
 .taste-add-btn:hover { background: var(--white-10); color: var(--white); }
 
-/* History */
-.history-count {
-  font-size: 12px;
-  color: var(--white-50);
-  margin-bottom: 12px;
-}
+.history-count { font-size: 12px; color: var(--white-50); margin-bottom: 12px; }
 
 .history-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--white-10);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid var(--white-10);
 }
-
 .history-item:last-child { border-bottom: none; }
 
 .history-topic {
-  font-size: 14px;
-  color: var(--white-70);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 14px; color: var(--white-70); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.history-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: 12px;
-}
-
-.history-date {
-  font-size: 11px;
-  color: var(--white-50);
-}
+.history-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: 12px; }
+.history-date { font-size: 11px; color: var(--white-50); }
 
 .history-link {
-  font-size: 11px;
-  color: var(--accent-light);
-  text-decoration: none;
-  font-weight: 500;
+  font-size: 11px; color: var(--accent-light); text-decoration: none; font-weight: 500;
 }
-
 .history-link:hover { color: var(--white); }
 
-/* ── Progress Bar (top of page during production) ────── */
+/* ── Progress Bar ──────────────────────────────────────── */
 .progress-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  z-index: 200;
+  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 200;
   background: transparent;
 }
-
 .progress-fill {
-  height: 100%;
-  width: 0%;
+  height: 100%; width: 0%;
   background: linear-gradient(90deg, var(--accent), var(--green));
-  transition: width 500ms ease;
-  border-radius: 0 2px 2px 0;
+  transition: width 500ms ease; border-radius: 0 2px 2px 0;
 }
 
 /* ── Utilities ─────────────────────────────────────────── */
 .hidden { display: none !important; }
-
 .fade-in { animation: fadeUp 400ms ease; }
 </style>
 </head>
@@ -780,7 +850,13 @@ body {
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <!-- intentionally empty for balance -->
+      <div class="block-selector" id="blockSelector">
+        <button class="block-current" id="blockCurrentBtn" onclick="toggleBlockMenu()">
+          <span id="activeBlockName">Loading...</span>
+          <span class="chevron">&#9662;</span>
+        </button>
+        <div class="block-menu hidden" id="blockMenu"></div>
+      </div>
     </div>
     <div class="topbar-right">
       <button class="icon-btn" onclick="togglePanel()" title="Taste & History" id="panelBtn">
@@ -794,12 +870,10 @@ body {
     <div class="hero-logo">Kira</div>
     <div class="hero-sub">Autonomous Video Studio</div>
 
-    <!-- State: Idle -->
     <div id="stateIdle">
       <button class="cta-btn" onclick="propose()">What should we post today?</button>
     </div>
 
-    <!-- State: Loading -->
     <div id="stateLoading" class="hidden">
       <div class="loading-state">
         <div class="loader"></div>
@@ -807,29 +881,22 @@ body {
       </div>
     </div>
 
-    <!-- State: Proposals -->
     <div id="stateProposals" class="hidden fade-in">
-      <div class="cards-container" id="cardsContainer">
-        <!-- filled by JS -->
-      </div>
+      <div class="cards-container" id="cardsContainer"></div>
       <div class="make-bar hidden" id="makeBar">
         <button class="make-btn" onclick="makeIt()" id="makeBtn">Make it</button>
         <button class="shuffle-btn" onclick="skip()">Show me others</button>
       </div>
     </div>
 
-    <!-- State: Producing -->
     <div id="stateProducing" class="hidden fade-in">
       <div class="production-state">
         <div class="prod-topic" id="prodTopic"></div>
-        <div class="prod-phases" id="prodPhases">
-          <!-- filled by JS -->
-        </div>
+        <div class="prod-phases" id="prodPhases"></div>
         <div class="prod-note">You can close this tab. Kira will keep working.</div>
       </div>
     </div>
 
-    <!-- State: Done -->
     <div id="stateDone" class="hidden fade-in">
       <div class="done-state">
         <div class="done-check">&#10003;</div>
@@ -842,7 +909,6 @@ body {
       </div>
     </div>
 
-    <!-- State: Error -->
     <div id="stateError" class="hidden fade-in">
       <div class="error-state">
         <div class="error-icon">!</div>
@@ -862,8 +928,6 @@ body {
     <span class="panel-title">Settings</span>
     <button class="panel-close" onclick="togglePanel()">&#10005;</button>
   </div>
-
-  <!-- Taste -->
   <div class="panel-section">
     <div class="section-label">Your Taste</div>
     <div class="taste-tags" id="tasteTags"></div>
@@ -875,8 +939,6 @@ body {
       <button class="taste-add-btn" onclick="addTaste()">Add</button>
     </div>
   </div>
-
-  <!-- History -->
   <div class="panel-section">
     <div class="section-label">History</div>
     <div class="history-count" id="historyCount"></div>
@@ -891,11 +953,285 @@ body {
   <video id="previewVideo" class="hidden" controls autoplay muted playsinline></video>
 </div>
 
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
 <script>
 const API = '';
 let selectedIdx = -1;
 let proposals = [];
 let eventSource = null;
+let activeBlock = null;
+let allBlocks = [];
+let PHASES = [];
+let THUMB_PHASES = new Set(['image_gen', 'video_gen']);
+
+/* ── Block Management ──────────────────────────────────── */
+
+async function loadBlocks() {
+  try {
+    const [blocksRes, activeRes] = await Promise.all([
+      fetch(`${API}/api/blocks`),
+      fetch(`${API}/api/blocks/active`),
+    ]);
+    const blocksData = await blocksRes.json();
+    activeBlock = await activeRes.json();
+    allBlocks = blocksData.blocks || [];
+    document.getElementById('activeBlockName').textContent = activeBlock.name || 'Select Block';
+    buildPhasesFromConfig(activeBlock);
+  } catch (e) { console.error('Failed to load blocks:', e); }
+}
+
+function buildPhasesFromConfig(config) {
+  PHASES = [
+    ['script', 'Writing script'],
+    ['plan', 'Planning shots'],
+    ['image_gen', 'Generating images'],
+    ['video_gen', 'Generating video'],
+    ['concat', 'Assembling clips'],
+  ];
+  if (config.narration_enabled !== false) {
+    PHASES.push(['voiceover', 'Recording voiceover']);
+  }
+  PHASES.push(['music', 'Creating music']);
+  PHASES.push(['mux', config.narration_enabled !== false ? 'Mixing audio' : 'Adding music']);
+  PHASES.push(['upload', 'Uploading to YouTube']);
+  PHASES.push(['memory', 'Saving to memory']);
+}
+
+function toggleBlockMenu() {
+  const menu = document.getElementById('blockMenu');
+  const btn = document.getElementById('blockCurrentBtn');
+  const isOpen = !menu.classList.contains('hidden');
+  if (isOpen) {
+    menu.classList.add('hidden');
+    btn.classList.remove('open');
+    return;
+  }
+  btn.classList.add('open');
+  renderBlockMenu();
+  menu.classList.remove('hidden');
+  setTimeout(() => {
+    document.addEventListener('click', closeBlockMenuOutside, { once: true });
+  }, 0);
+}
+
+function closeBlockMenuOutside(e) {
+  const selector = document.getElementById('blockSelector');
+  if (!selector.contains(e.target)) {
+    document.getElementById('blockMenu').classList.add('hidden');
+    document.getElementById('blockCurrentBtn').classList.remove('open');
+  }
+}
+
+function renderBlockMenu() {
+  const menu = document.getElementById('blockMenu');
+  menu.innerHTML = '';
+  allBlocks.forEach(b => {
+    const item = document.createElement('div');
+    item.className = 'block-item' + (b.active ? ' active' : '');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = b.name;
+    nameSpan.style.flex = '1';
+    nameSpan.style.overflow = 'hidden';
+    nameSpan.style.textOverflow = 'ellipsis';
+    nameSpan.style.whiteSpace = 'nowrap';
+    item.appendChild(nameSpan);
+    if (!b.active && allBlocks.length > 1) {
+      const del = document.createElement('button');
+      del.className = 'block-delete';
+      del.innerHTML = '&#10005;';
+      del.title = 'Delete block';
+      del.onclick = (e) => { e.stopPropagation(); deleteBlock(b.id, b.name); };
+      item.appendChild(del);
+    }
+    item.onclick = () => switchBlock(b.id);
+    menu.appendChild(item);
+  });
+  const divider = document.createElement('div');
+  divider.className = 'block-divider';
+  menu.appendChild(divider);
+  const create = document.createElement('div');
+  create.className = 'block-create-item';
+  create.innerHTML = '<span class="plus">+</span> Create New Block';
+  create.onclick = openCreateModal;
+  menu.appendChild(create);
+}
+
+async function switchBlock(blockId) {
+  document.getElementById('blockMenu').classList.add('hidden');
+  document.getElementById('blockCurrentBtn').classList.remove('open');
+  if (activeBlock && activeBlock.id === blockId) return;
+  try {
+    await fetch(`${API}/api/blocks/${blockId}/activate`, { method: 'POST' });
+    await loadBlocks();
+    resetToIdle();
+    showToast(`Switched to "${activeBlock.name}"`);
+  } catch (e) { console.error(e); }
+}
+
+async function deleteBlock(blockId, name) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    await fetch(`${API}/api/blocks/${blockId}`, { method: 'DELETE' });
+    await loadBlocks();
+    showToast(`"${name}" deleted`);
+  } catch (e) { console.error(e); }
+  document.getElementById('blockMenu').classList.add('hidden');
+  document.getElementById('blockCurrentBtn').classList.remove('open');
+}
+
+/* ── Create Block Modal ────────────────────────────────── */
+
+function openCreateModal() {
+  document.getElementById('blockMenu').classList.add('hidden');
+  document.getElementById('blockCurrentBtn').classList.remove('open');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'createBlockModal';
+
+  overlay.innerHTML = `
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title">Create Content Block</div>
+      <div class="modal-sub">Define a new content niche for Kira to produce videos in.</div>
+
+      <div class="form-group">
+        <label class="form-label">Block Name *</label>
+        <input type="text" class="form-input" id="cbName" placeholder="e.g. Rural South India — Ghibli">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Description *</label>
+        <textarea class="form-textarea" id="cbDesc" rows="3"
+          placeholder="What kind of videos should Kira make? Be specific about the theme, audience, and content focus."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Visual Style</label>
+        <input type="text" class="form-input" id="cbStyle"
+          placeholder="e.g. Studio Ghibli animation, warm colors, hand-drawn feel">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Video Duration</label>
+        <div class="slider-wrap">
+          <input type="range" min="15" max="60" value="20" id="cbDurMin"
+            oninput="document.getElementById('cbDurMinVal').textContent = this.value + 's'">
+          <span class="slider-value" id="cbDurMinVal">20s</span>
+          <span style="color:var(--white-50);font-size:13px">to</span>
+          <input type="range" min="15" max="60" value="30" id="cbDurMax"
+            oninput="document.getElementById('cbDurMaxVal').textContent = this.value + 's'">
+          <span class="slider-value" id="cbDurMaxVal">30s</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Example Topics (one per line)</label>
+        <textarea class="form-textarea" id="cbTopics" rows="3"
+          placeholder="Grandmother making filter coffee at dawn\nChildren walking to school through paddy fields\nMarket day in a small village"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Options</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="cbNarration" checked> Narration
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="cbCaptions" checked> Text Overlay
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="cbTrends" onchange="toggleTrendsField()"> YouTube Trends
+          </label>
+        </div>
+        <div class="conditional-field hidden" id="cbTrendsField">
+          <label class="form-label" style="margin-top:8px">Seed Keywords (comma-separated)</label>
+          <input type="text" class="form-input" id="cbKeywords"
+            placeholder="e.g. indian cooking, village life, monsoon">
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="modal-btn-secondary" onclick="closeCreateModal()">Cancel</button>
+        <button class="modal-btn-primary" id="cbSubmitBtn" onclick="submitCreateBlock()">
+          Create Block
+        </button>
+      </div>
+    </div>
+  `;
+
+  overlay.onclick = (e) => { if (e.target === overlay) closeCreateModal(); };
+  document.body.appendChild(overlay);
+}
+
+function toggleTrendsField() {
+  const field = document.getElementById('cbTrendsField');
+  const checked = document.getElementById('cbTrends').checked;
+  field.classList.toggle('hidden', !checked);
+}
+
+function closeCreateModal() {
+  const modal = document.getElementById('createBlockModal');
+  if (modal) modal.remove();
+}
+
+async function submitCreateBlock() {
+  const name = document.getElementById('cbName').value.trim();
+  const desc = document.getElementById('cbDesc').value.trim();
+  if (!name) { alert('Block name is required.'); return; }
+  if (!desc) { alert('Block description is required.'); return; }
+
+  const style = document.getElementById('cbStyle').value.trim();
+  const durMin = parseInt(document.getElementById('cbDurMin').value);
+  const durMax = parseInt(document.getElementById('cbDurMax').value);
+  const topics = document.getElementById('cbTopics').value.trim()
+    .split('\n').map(t => t.trim()).filter(t => t);
+  const narration = document.getElementById('cbNarration').checked;
+  const captions = document.getElementById('cbCaptions').checked;
+  const trends = document.getElementById('cbTrends').checked;
+  const keywords = trends
+    ? document.getElementById('cbKeywords').value.split(',').map(k => k.trim()).filter(k => k)
+    : [];
+
+  const btn = document.getElementById('cbSubmitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="modal-spinner"></div> Creating block...';
+
+  try {
+    const res = await fetch(`${API}/api/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, description: desc, style,
+        duration_min: Math.min(durMin, durMax),
+        duration_max: Math.max(durMin, durMax),
+        example_topics: topics,
+        narration_enabled: narration,
+        captions_enabled: captions,
+        youtube_trends_enabled: trends,
+        seed_keywords: keywords,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to create block');
+    closeCreateModal();
+    await loadBlocks();
+    resetToIdle();
+    showToast(`"${name}" created!`);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Create Block';
+    alert('Failed to create block: ' + e.message);
+  }
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3000);
+}
 
 /* ── State Switching ─────────────────────────────────────── */
 
@@ -996,23 +1332,6 @@ async function makeIt() {
 
 /* ── Production Tracker ──────────────────────────────────── */
 
-const PHASES = [
-  ['script', 'Writing script'],
-  ['plan', 'Planning shots'],
-  ['image_gen', 'Generating images'],
-  ['video_gen', 'Generating video'],
-  ['concat', 'Assembling clips'],
-  ['voiceover', 'Recording voiceover'],
-  ['music', 'Creating music'],
-  ['mux', 'Mixing audio'],
-  ['upload', 'Uploading to YouTube'],
-  ['memory', 'Saving to memory'],
-];
-
-// Phases whose SSE preview_url is a reference image / video clip worth
-// showing as a thumbnail (as opposed to e.g. the final YouTube link).
-const THUMB_PHASES = new Set(['image_gen', 'video_gen']);
-
 function buildPhaseList() {
   const container = document.getElementById('prodPhases');
   container.innerHTML = '';
@@ -1039,11 +1358,7 @@ function setPhaseThumb(phaseId, url) {
   const el = document.createElement(isVideo ? 'video' : 'img');
   el.className = 'phase-thumb';
   el.src = url;
-  if (isVideo) {
-    el.muted = true;
-    el.preload = 'metadata';
-    el.playsInline = true;
-  }
+  if (isVideo) { el.muted = true; el.preload = 'metadata'; el.playsInline = true; }
   el.addEventListener('click', () => openPreview(url, isVideo));
   wrap.appendChild(el);
   wrap.classList.remove('hidden');
@@ -1054,23 +1369,17 @@ function openPreview(url, isVideo) {
   const img = document.getElementById('previewImg');
   const vid = document.getElementById('previewVideo');
   if (isVideo) {
-    vid.src = url;
-    vid.classList.remove('hidden');
-    img.classList.add('hidden');
+    vid.src = url; vid.classList.remove('hidden'); img.classList.add('hidden');
   } else {
-    vid.pause();
-    vid.removeAttribute('src');
-    img.src = url;
-    img.classList.remove('hidden');
-    vid.classList.add('hidden');
+    vid.pause(); vid.removeAttribute('src');
+    img.src = url; img.classList.remove('hidden'); vid.classList.add('hidden');
   }
   modal.classList.remove('hidden');
 }
 
 function closePreview() {
   document.getElementById('previewModal').classList.add('hidden');
-  const vid = document.getElementById('previewVideo');
-  vid.pause();
+  document.getElementById('previewVideo').pause();
 }
 
 function showProgressBar() {
@@ -1094,12 +1403,7 @@ function connectSSE() {
 
   eventSource.onmessage = (e) => {
     const data = JSON.parse(e.data);
-
-    if (data.phase === 'done') {
-      eventSource.close();
-      onDone(data);
-      return;
-    }
+    if (data.phase === 'done') { eventSource.close(); onDone(data); return; }
     if (data.phase === 'error' || data.status === 'error') {
       eventSource.close();
       document.getElementById('errorMsg').textContent = data.error_message || 'Production failed';
@@ -1107,13 +1411,10 @@ function connectSSE() {
       hideProgressBar();
       return;
     }
-
-    // Update phase UI
     const dot = document.getElementById(`dot-${data.phase}`);
     const label = document.getElementById(`label-${data.phase}`);
     const row = document.getElementById(`phase-${data.phase}`);
     if (!dot) return;
-
     if (data.status === 'in_progress') {
       dot.className = 'phase-dot active';
       label.className = 'phase-label active';
@@ -1128,17 +1429,14 @@ function connectSSE() {
     }
   };
 
-  eventSource.onerror = () => {
-    setTimeout(pollStatus, 3000);
-  };
+  eventSource.onerror = () => { setTimeout(pollStatus, 3000); };
 }
 
 function onDone(data) {
   hideProgressBar();
   const link = document.getElementById('doneYtLink');
   if (data.preview_url && data.preview_url.includes('youtube.com')) {
-    link.href = data.preview_url;
-    link.style.display = '';
+    link.href = data.preview_url; link.style.display = '';
   } else {
     link.style.display = 'none';
   }
@@ -1158,13 +1456,10 @@ async function pollStatus() {
           const label = document.getElementById(`label-${p.phase}`);
           if (!dot) return;
           if (p.status === 'completed') {
-            dot.className = 'phase-dot done';
-            label.className = 'phase-label done';
-            setPhaseThumb(p.phase, p.preview_url);
-            done++;
+            dot.className = 'phase-dot done'; label.className = 'phase-label done';
+            setPhaseThumb(p.phase, p.preview_url); done++;
           } else if (p.status === 'in_progress') {
-            dot.className = 'phase-dot active';
-            label.className = 'phase-label active';
+            dot.className = 'phase-dot active'; label.className = 'phase-label active';
           }
         });
         updateProgress(done);
@@ -1174,8 +1469,7 @@ async function pollStatus() {
       onDone({ preview_url: data.result?.youtube_url });
     } else if (data.status === 'error') {
       document.getElementById('errorMsg').textContent = data.error || 'Unknown error';
-      showState('stateError');
-      hideProgressBar();
+      showState('stateError'); hideProgressBar();
     }
   } catch (e) { setTimeout(pollStatus, 10000); }
 }
@@ -1287,6 +1581,7 @@ function resetToIdle() {
 /* ── Init ─────────────────────────────────────────────────── */
 
 async function init() {
+  await loadBlocks();
   try {
     const res = await fetch(`${API}/api/status`);
     const data = await res.json();
@@ -1307,13 +1602,10 @@ async function init() {
           const label = document.getElementById(`label-${p.phase}`);
           if (!dot) return;
           if (p.status === 'completed') {
-            dot.className = 'phase-dot done';
-            label.className = 'phase-label done';
-            setPhaseThumb(p.phase, p.preview_url);
-            done++;
+            dot.className = 'phase-dot done'; label.className = 'phase-label done';
+            setPhaseThumb(p.phase, p.preview_url); done++;
           } else if (p.status === 'in_progress') {
-            dot.className = 'phase-dot active';
-            label.className = 'phase-label active';
+            dot.className = 'phase-dot active'; label.className = 'phase-label active';
           }
         });
         updateProgress(done);

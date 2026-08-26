@@ -4,6 +4,8 @@ Run locally:  uvicorn kira.server:app --reload --port 8080
 Or:           python -m kira.server
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -27,7 +29,8 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-from .agent import root_agent
+from .agent import build_agents
+from . import block_manager
 from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
 
@@ -37,8 +40,14 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "kira"
 session_service = InMemorySessionService()
+
+# Initialize from active block
+_active_config = block_manager.get_active_block()
+_active_block_id = _active_config["id"]
+_active_block_path = block_manager.get_block_path(_active_block_id)
+_root_agent = build_agents(_active_config, _active_block_path)
 runner = Runner(
-    agent=root_agent,
+    agent=_root_agent,
     app_name=APP_NAME,
     session_service=session_service,
 )
@@ -54,6 +63,53 @@ _state = {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────
+
+
+def _get_phases() -> list[tuple[str, str]]:
+    """Build the production phase list from the active block config."""
+    narration = _active_config.get("narration_enabled", True)
+    phases = [
+        ("script", "Writing script"),
+        ("plan", "Planning shots"),
+        ("image_gen", "Generating images"),
+        ("video_gen", "Generating video"),
+        ("concat", "Assembling clips"),
+    ]
+    if narration:
+        phases.append(("voiceover", "Recording voiceover"))
+    phases.append(("music", "Creating music"))
+    phases.append(("mux", "Mixing audio" if narration else "Adding music"))
+    phases.extend([
+        ("upload", "Uploading to YouTube"),
+        ("memory", "Saving to memory"),
+    ])
+    return phases
+
+
+async def _activate_block(block_id: str):
+    """Switch to a different content block — rebuilds the agent tree."""
+    global runner, _root_agent, _active_config, _active_block_id, _active_block_path
+
+    config = block_manager.get_block(block_id)
+    block_path = block_manager.get_block_path(block_id)
+
+    new_root = build_agents(config, block_path)
+    runner = Runner(agent=new_root, app_name=APP_NAME, session_service=session_service)
+
+    _root_agent = new_root
+    _active_config = config
+    _active_block_id = block_id
+    _active_block_path = block_path
+
+    # Reset session (new block = new conversation context)
+    _state["session_id"] = None
+    _state["status"] = "idle"
+    _state["current_proposal"] = None
+    _state["production_result"] = None
+    _state["error"] = None
+
+    block_manager.set_active_block(block_id)
+
 
 async def _get_or_create_session():
     """Get existing session or create a new one."""
@@ -103,14 +159,7 @@ def _clean_markdown(text: str) -> str:
 
 
 def _parse_proposal(raw_text: str) -> dict:
-    """Parse the agent's proposal text into structured data.
-
-    Kira's research agent typically responds with:
-    1. A dump of trending stories/web results
-    2. Then a proposal section starting with "I propose..." or "### Proposal"
-
-    We need to find the actual proposal, not the preamble.
-    """
+    """Parse the agent's proposal text into structured data."""
     topic = ""
     why = ""
     visual = ""
@@ -144,7 +193,6 @@ def _parse_proposal(raw_text: str) -> dict:
             topic = _clean_markdown(bold_match.group(1))
 
     # Parse sections from the proposal part of the text
-    # Find where the actual proposal starts
     proposal_start = 0
     for marker in [r'I propose', r'###\s*Proposal', r'###\s*Why This Topic',
                    r'My proposal', r'I recommend']:
@@ -272,7 +320,7 @@ async def index():
 async def get_status():
     return {
         "status": _state["status"],
-        "proposals": _state["current_proposal"],  # list of proposals or None
+        "proposals": _state["current_proposal"],
         "result": _state["production_result"],
         "error": _state["error"],
         "phases": [
@@ -286,7 +334,6 @@ async def get_status():
 
 def _parse_multiple_proposals(raw_text: str) -> list[dict]:
     """Parse 3 proposals from agent response into a list of dicts."""
-    # Split by option markers: "Option 1", "**1.**", "### 1.", etc.
     splits = re.split(
         r'(?:^|\n)\s*(?:#{1,4}\s*)?(?:\*\*)?(?:Option|Proposal|Topic)\s*(\d)[\s.:—\-\)]+',
         raw_text, flags=re.IGNORECASE
@@ -295,8 +342,6 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
     proposals = []
 
     if len(splits) >= 3:
-        # We got splits — parse each chunk
-        # splits[0] is preamble, then alternating (number, content)
         for i in range(1, len(splits), 2):
             if i + 1 < len(splits):
                 chunk = splits[i + 1]
@@ -304,7 +349,7 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
                 if p["topic"] != "Untitled Proposal":
                     proposals.append(p)
 
-    # Fallback: try splitting by numbered bold items "**1. Topic**" or "1. **Topic**"
+    # Fallback: try splitting by numbered bold items
     if len(proposals) < 2:
         proposals = []
         bold_topics = re.findall(
@@ -313,10 +358,8 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
         )
         if len(bold_topics) >= 2:
             for bt in bold_topics[:3]:
-                # Find the section for each topic
                 topic_clean = bt.strip().rstrip('.')
                 idx = raw_text.find(bt)
-                # Get text after this topic until next numbered item or end
                 remaining = raw_text[idx + len(bt):]
                 next_num = re.search(r'\n\s*\d+[\.\)]\s*\*\*', remaining)
                 chunk = remaining[:next_num.start()] if next_num else remaining[:500]
@@ -341,14 +384,14 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
 
                 proposals.append({
                     "topic": topic_clean,
-                    "why": why or "A compelling space topic.",
+                    "why": why or "A compelling topic for this block.",
                     "visual": "",
                     "source": source,
                     "trending": trending or "Trending",
                     "raw": chunk,
                 })
 
-    # Final fallback: parse as a single proposal and return it alone
+    # Final fallback: parse as a single proposal
     if len(proposals) < 1:
         single = _parse_proposal(raw_text)
         proposals = [single]
@@ -430,14 +473,12 @@ async def approve(request: Request):
             status_code=409,
         )
 
-    # Accept optional topic index from request body
     try:
         body = await request.json()
         chosen_idx = body.get("index", 0)
     except Exception:
         chosen_idx = 0
 
-    # Store the chosen topic for the approval message
     proposals = _state["current_proposal"]
     if isinstance(proposals, list) and 0 <= chosen_idx < len(proposals):
         chosen = proposals[chosen_idx]
@@ -450,19 +491,8 @@ async def approve(request: Request):
     _state["error"] = None
     await event_bus.clear()
 
-    # Emit initial pending phases
-    phases = [
-        ("script", "Writing script"),
-        ("plan", "Planning shots"),
-        ("image_gen", "Generating images"),
-        ("video_gen", "Generating video"),
-        ("concat", "Assembling clips"),
-        ("voiceover", "Recording voiceover"),
-        ("music", "Creating music"),
-        ("mux", "Mixing audio"),
-        ("upload", "Uploading to YouTube"),
-        ("memory", "Saving to memory"),
-    ]
+    # Emit initial pending phases (dynamic based on active block)
+    phases = _get_phases()
     for phase_id, phase_name in phases:
         await event_bus.emit(ProductionEvent(
             phase=phase_id,
@@ -470,7 +500,6 @@ async def approve(request: Request):
             detail=phase_name,
         ))
 
-    # Start production in background
     asyncio.create_task(_run_production())
     return {"status": "producing", "message": "Production started."}
 
@@ -478,7 +507,6 @@ async def approve(request: Request):
 async def _run_production():
     """Run the full production pipeline via ADK, emitting events."""
     try:
-        # Send approval to the agent — this triggers the full pipeline
         session = await _get_or_create_session()
         chosen = _state.get("chosen_topic", "")
         if chosen:
@@ -490,21 +518,10 @@ async def _run_production():
             parts=[genai_types.Part(text=approval_msg)],
         )
 
+        phases = _get_phases()
+        phase_order = [p[0] for p in phases]
+        phase_labels = {p[0]: p[1] for p in phases}
         current_phase_idx = 0
-        phase_order = ["script", "plan", "image_gen", "video_gen",
-                       "concat", "voiceover", "music", "mux", "upload", "memory"]
-        phase_labels = {
-            "script": "Writing script",
-            "plan": "Planning shots",
-            "image_gen": "Generating images",
-            "video_gen": "Generating video",
-            "concat": "Assembling clips",
-            "voiceover": "Recording voiceover",
-            "music": "Creating music",
-            "mux": "Mixing audio",
-            "upload": "Uploading to YouTube",
-            "memory": "Saving to memory",
-        }
 
         # Map tool names to phases
         tool_to_phase = {
@@ -516,6 +533,7 @@ async def _run_production():
             "generate_voiceover": "voiceover",
             "generate_background_music": "music",
             "fit_and_mux_audio": "mux",
+            "mux_music_only": "mux",
             "upload_to_youtube": "upload",
             "write_memory": "memory",
         }
@@ -526,62 +544,59 @@ async def _run_production():
             session_id=session.id,
             new_message=content,
         ):
-            # Track tool calls to update phases
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
                         response_parts.append(part.text)
 
-                    # Detect function calls to map to production phases
                     if hasattr(part, 'function_call') and part.function_call:
                         tool_name = part.function_call.name
                         if tool_name in tool_to_phase:
                             phase = tool_to_phase[tool_name]
-                            # Mark all prior phases as completed
-                            phase_idx = phase_order.index(phase)
-                            for i in range(current_phase_idx, phase_idx):
+                            if phase in phase_order:
+                                phase_idx = phase_order.index(phase)
+                                for i in range(current_phase_idx, phase_idx):
+                                    if phase_order[i] in phase_labels:
+                                        await event_bus.emit(ProductionEvent(
+                                            phase=phase_order[i],
+                                            status="completed",
+                                            detail=f"{phase_labels[phase_order[i]]} — done",
+                                            progress=1.0,
+                                        ))
                                 await event_bus.emit(ProductionEvent(
-                                    phase=phase_order[i],
-                                    status="completed",
-                                    detail=f"{phase_labels[phase_order[i]]} — done",
-                                    progress=1.0,
+                                    phase=phase,
+                                    status="in_progress",
+                                    detail=f"{phase_labels[phase]} ...",
+                                    progress=0.5,
                                 ))
-                            # Mark current phase as in_progress
-                            await event_bus.emit(ProductionEvent(
-                                phase=phase,
-                                status="in_progress",
-                                detail=f"{phase_labels[phase]} ...",
-                                progress=0.5,
-                            ))
-                            current_phase_idx = phase_idx
+                                current_phase_idx = phase_idx
 
-                    # Detect function responses (tool results)
                     if hasattr(part, 'function_response') and part.function_response:
                         resp_name = part.function_response.name
                         if resp_name in tool_to_phase:
                             phase = tool_to_phase[resp_name]
-                            result_data = part.function_response.response
-                            preview = None
-                            # Extract preview URLs from image/video results
-                            if isinstance(result_data, dict):
-                                for v in result_data.values():
-                                    if isinstance(v, str) and (
-                                        v.startswith("http") and
-                                        any(ext in v.lower() for ext in [".png", ".jpg", ".mp4", ".webm"])
-                                    ):
-                                        preview = v
-                            elif isinstance(result_data, str):
-                                if result_data.startswith("http"):
-                                    preview = result_data
+                            if phase in phase_order:
+                                result_data = part.function_response.response
+                                preview = None
+                                if isinstance(result_data, dict):
+                                    for v in result_data.values():
+                                        if isinstance(v, str) and (
+                                            v.startswith("http") and
+                                            any(ext in v.lower() for ext in [".png", ".jpg", ".mp4", ".webm"])
+                                        ):
+                                            preview = v
+                                elif isinstance(result_data, str):
+                                    if result_data.startswith("http"):
+                                        preview = result_data
 
-                            await event_bus.emit(ProductionEvent(
-                                phase=phase,
-                                status="completed",
-                                detail=f"{phase_labels[phase]} — done",
-                                progress=1.0,
-                                preview_url=preview,
-                            ))
-                            current_phase_idx = phase_order.index(phase) + 1
+                                await event_bus.emit(ProductionEvent(
+                                    phase=phase,
+                                    status="completed",
+                                    detail=f"{phase_labels[phase]} — done",
+                                    progress=1.0,
+                                    preview_url=preview,
+                                ))
+                                current_phase_idx = phase_order.index(phase) + 1
 
         # Mark all remaining phases as completed
         for i in range(current_phase_idx, len(phase_order)):
@@ -594,7 +609,6 @@ async def _run_production():
 
         full_response = "\n".join(response_parts)
 
-        # Extract YouTube video ID from response
         video_id = None
         yt_match = re.search(r'(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})', full_response)
         if yt_match:
@@ -607,7 +621,6 @@ async def _run_production():
         }
         _state["status"] = "done"
 
-        # Emit a final "done" sentinel
         await event_bus.emit(ProductionEvent(
             phase="done",
             status="completed",
@@ -644,7 +657,6 @@ async def production_stream(request: Request):
                     if event.phase == "done" or event.status == "error":
                         break
                 except asyncio.TimeoutError:
-                    # Send keepalive
                     yield ": keepalive\n\n"
         finally:
             await event_bus.unsubscribe(queue)
@@ -682,7 +694,7 @@ async def get_taste():
 async def update_taste(request: Request):
     body = await request.json()
     instruction = body.get("instruction", "").strip()
-    instruction_type = body.get("type", "standing")  # "standing" or "next"
+    instruction_type = body.get("type", "standing")
 
     if not instruction:
         return JSONResponse({"error": "No instruction provided."}, status_code=400)
@@ -692,14 +704,13 @@ async def update_taste(request: Request):
     else:
         write_memory(standing_instruction=instruction)
 
-    # Also tell the agent so it's aware in the current session
     try:
         await _send_message(
             f"User steering: {instruction}. "
             "Save this to memory and acknowledge."
         )
     except Exception:
-        pass  # Memory is already saved directly
+        pass
 
     return {"status": "ok", "instruction": instruction, "type": instruction_type}
 
@@ -715,6 +726,93 @@ async def remove_taste(index: int):
         save_memory(memory)
         return {"status": "ok", "removed": removed}
     return JSONResponse({"error": "Invalid index."}, status_code=404)
+
+
+# ── Block API ────────────────────────────────────────────────────
+
+@app.get("/api/blocks")
+async def list_blocks_route():
+    """List all content blocks."""
+    return {"blocks": block_manager.list_blocks()}
+
+
+@app.get("/api/blocks/active")
+async def get_active_block_route():
+    """Return the currently active block's config."""
+    return _active_config
+
+
+@app.post("/api/blocks")
+async def create_block_route(request: Request):
+    """Create a new content block using the meta LLM."""
+    if _state["status"] == "producing":
+        return JSONResponse(
+            {"error": "Cannot create a block while production is in progress."},
+            status_code=409,
+        )
+
+    try:
+        form_data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON."}, status_code=400)
+
+    name = form_data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "Block name is required."}, status_code=400)
+    if not form_data.get("description", "").strip():
+        return JSONResponse({"error": "Block description is required."}, status_code=400)
+
+    try:
+        config = await block_manager.create_block(form_data)
+        # Auto-activate the new block
+        await _activate_block(config["id"])
+        return {"block": config, "message": "Block created and activated."}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    except Exception as e:
+        logger.error(f"Block creation failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/blocks/{block_id}/activate")
+async def activate_block_route(block_id: str):
+    """Switch to a different content block."""
+    if _state["status"] == "producing":
+        return JSONResponse(
+            {"error": "Cannot switch blocks while production is in progress."},
+            status_code=409,
+        )
+
+    try:
+        await _activate_block(block_id)
+        return {"status": "ok", "active_block": _active_config["name"]}
+    except FileNotFoundError:
+        return JSONResponse({"error": f"Block '{block_id}' not found."}, status_code=404)
+
+
+@app.delete("/api/blocks/{block_id}")
+async def delete_block_route(block_id: str):
+    """Delete a content block."""
+    if _state["status"] == "producing":
+        return JSONResponse(
+            {"error": "Cannot delete a block while production is in progress."},
+            status_code=409,
+        )
+
+    blocks = block_manager.list_blocks_raw()
+    if len(blocks) <= 1:
+        return JSONResponse({"error": "Cannot delete the last block."}, status_code=409)
+
+    try:
+        was_active = block_id == _active_block_id
+        block_manager.delete_block(block_id)
+        if was_active:
+            new_active = block_manager.get_active_block_id()
+            if new_active:
+                await _activate_block(new_active)
+        return {"status": "ok", "message": f"Block '{block_id}' deleted."}
+    except FileNotFoundError:
+        return JSONResponse({"error": f"Block '{block_id}' not found."}, status_code=404)
 
 
 # ── Entry point ───────────────────────────────────────────────────

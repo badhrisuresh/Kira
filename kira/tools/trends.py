@@ -1,58 +1,25 @@
+from __future__ import annotations
+
 import time
 
-# Rotate through these in small batches to avoid rate limits.
-# These are the highest-signal seed keywords for space content on YouTube.
-SEED_KEYWORDS = [
-    "black hole",
-    "asteroid",
-    "rocket launch",
-    "james webb",
-    "supernova",
-    "exoplanet",
-    "mars planet",
-    "meteorite",
-    "nebula",
-    "dark matter",
-    "space exploration",
-    "moon landing",
-    "solar system",
-]
+_config = {
+    "seed_keywords": [],
+    "noise_terms": set(),
+    "enabled": True,
+}
 
-# Max keywords to query per call (keeps us under rate limits)
 MAX_KEYWORDS_PER_CALL = 4
 
-# Noise terms to filter out non-space results
-NOISE_TERMS = {
-    # Entertainment / music
-    "samsung", "mario", "guardians", "animal planet", "fishing",
-    "boboiboy", "fortnite", "minecraft", "roblox", "dj", "song",
-    "lyrics", "music", "karaoke", "champagne", "oasis", "remix",
-    "porcupine tree", "taylor swift", "soundgarden", "muse",
-    "sivert", "concert", "album", "band", "playlist",
-    "killing joke", "sun ra", "fang",
-    # Games / gaming
-    "game", "palworld", "factorio", "kerbal", "stellaris",
-    "no man", "destiny 2", "starfield", "warframe", "gacha",
-    "mini game", "beat phin", "blox fruit", "elden ring", "rpg",
-    "staff in", "koisuru", "anime",
-    # Products / brands
-    "soundcore", "projector", "honda", "tesla car", "toy", "toys",
-    "price", "buy", "review", "unboxing", "marker",
-    # Movies / TV shows
-    "trailer", "movie", "film", "series", "season", "episode",
-    "explained", "recap", "netflix", "disney", "marvel",
-    "asteroid city", "dark matter apple", "dark matter tv",
-    # Education / school
-    "powerpoint", "project", "school", "kid", "kids", "class",
-    "drawing",
-    # Non-English noise
-    "imagens", "saurini", "viaggi",
-}
+
+def configure(seed_keywords: list[str], noise_terms: list[str], enabled: bool = True):
+    _config["seed_keywords"] = list(seed_keywords)
+    _config["noise_terms"] = set(noise_terms)
+    _config["enabled"] = enabled
 
 
 def _is_noise(query: str) -> bool:
     q = query.lower()
-    if any(noise in q for noise in NOISE_TERMS):
+    if any(noise in q for noise in _config["noise_terms"]):
         return True
     ascii_chars = sum(1 for c in q if ord(c) < 128)
     if len(q) > 0 and ascii_chars / len(q) < 0.5:
@@ -62,11 +29,14 @@ def _is_noise(query: str) -> bool:
 
 def _pick_keywords() -> list[str]:
     """Pick a rotating subset of seed keywords based on current hour."""
+    keywords = _config["seed_keywords"]
+    if not keywords:
+        return []
     hour = int(time.time() // 3600)
-    start = (hour * MAX_KEYWORDS_PER_CALL) % len(SEED_KEYWORDS)
+    start = (hour * MAX_KEYWORDS_PER_CALL) % len(keywords)
     picked = []
     for i in range(MAX_KEYWORDS_PER_CALL):
-        picked.append(SEED_KEYWORDS[(start + i) % len(SEED_KEYWORDS)])
+        picked.append(keywords[(start + i) % len(keywords)])
     return picked
 
 
@@ -111,14 +81,20 @@ def _fetch_pytrends(keywords: list[str]) -> tuple[list, list]:
 
 
 def search_trends() -> str:
-    """Search YouTube for rising/top queries related to space and cosmos
-    keywords (black holes, asteroids, rocket launches, etc.) in the past
-    24 hours. This is the primary, niche-specific trend signal.
+    """Search YouTube for rising/top queries related to this block's
+    seed keywords in the past 24 hours. This is the primary,
+    niche-specific trend signal.
 
     This can return empty or rate-limited on some calls since it depends
     on an unofficial Google Trends endpoint. If this happens, call
-    web_trends_search() instead to get current space news via live web
-    search."""
+    web_trends_search() instead to search the live web for current
+    trending news in your content niche."""
+    if not _config["enabled"] or not _config["seed_keywords"]:
+        return (
+            "YouTube trends are not configured for this content block. "
+            "Call web_trends_search() to search the live web for current "
+            "trending topics in your niche instead."
+        )
     keywords = _pick_keywords()
     try:
         rising, top = _fetch_pytrends(keywords)
@@ -126,7 +102,7 @@ def search_trends() -> str:
         return (
             f"YouTube trends unavailable right now ({e}). "
             "Call web_trends_search() to search the web for current "
-            "trending space news instead."
+            "trending topics in your niche instead."
         )
 
     # Deduplicate, keeping the highest value per query
@@ -146,7 +122,7 @@ def search_trends() -> str:
         return (
             f"No YouTube trend signal found for {', '.join(keywords)} "
             "right now (likely rate-limited). Call web_trends_search() "
-            "to search the web for current trending space news instead."
+            "to search the web for current trending topics instead."
         )
 
     lines = []

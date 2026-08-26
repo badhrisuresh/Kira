@@ -4,9 +4,15 @@ from datetime import date
 
 from .. import storage
 
-MEMORY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "memory.json")
+_FALLBACK_MEMORY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "memory.json")
+_active_memory_path = _FALLBACK_MEMORY_PATH
 
 _DEFAULT_MEMORY = {"topics": [], "standing": [], "next": None}
+
+
+def configure(block_path: str):
+    global _active_memory_path
+    _active_memory_path = os.path.join(block_path, "memory.json")
 
 
 def read_memory() -> dict:
@@ -17,9 +23,9 @@ def read_memory() -> dict:
     topic request or None)."""
     if storage.is_enabled():
         return storage.read_json(dict(_DEFAULT_MEMORY))
-    if not os.path.exists(MEMORY_PATH):
+    if not os.path.exists(_active_memory_path):
         return dict(_DEFAULT_MEMORY)
-    with open(MEMORY_PATH) as f:
+    with open(_active_memory_path) as f:
         return json.load(f)
 
 
@@ -28,7 +34,7 @@ def save_memory(memory: dict) -> None:
     if storage.is_enabled():
         storage.write_json(memory)
     else:
-        with open(MEMORY_PATH, "w") as f:
+        with open(_active_memory_path, "w") as f:
             json.dump(memory, f, indent=2)
 
 
