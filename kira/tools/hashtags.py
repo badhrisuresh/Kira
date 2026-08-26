@@ -1,19 +1,25 @@
+import logging
 import re
-import time
 
-from .trends import _is_noise
+from .trends import _is_noise as is_noise_filter
 
+logger = logging.getLogger(__name__)
 
 FALLBACK_HASHTAGS = ["#Space", "#Cosmos", "#Universe"]
 
 
 def _to_hashtag(query: str) -> str:
-    """Convert a trending query string into a hashtag.
-
-    'black hole collision' -> '#BlackHoleCollision'
-    """
     words = re.sub(r"[^a-zA-Z0-9\s]", "", query).split()
+    if not words:
+        return ""
     return "#" + "".join(w.capitalize() for w in words)
+
+
+def _parse_value(raw) -> int:
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 5000
 
 
 def get_trending_hashtags(topic: str) -> list[str]:
@@ -22,26 +28,33 @@ def get_trending_hashtags(topic: str) -> list[str]:
     Returns a list like ['#BlackHole', '#JamesWebb', '#Supernova'].
     Falls back to generic space hashtags on failure or rate-limiting.
     """
+    if not topic or not topic.strip():
+        return FALLBACK_HASHTAGS
+
+    topic = topic.strip()
+
     try:
         from pytrends.request import TrendReq
 
-        pytrends = TrendReq(hl="en-US", tz=300)
+        pytrends = TrendReq(hl="en-US", tz=300, timeout=(5, 10))
         pytrends.build_payload(
             kw_list=[topic],
             timeframe="now 7-d",
             gprop="youtube",
         )
         related = pytrends.related_queries()
-        data = related[topic]
+        data = related.get(topic)
+        if data is None:
+            return FALLBACK_HASHTAGS
 
         candidates = []
 
         for kind in ("rising", "top"):
-            if data[kind] is not None and len(data[kind]) > 0:
+            if data.get(kind) is not None and len(data[kind]) > 0:
                 for _, row in data[kind].iterrows():
                     query = row["query"]
-                    value = int(row["value"])
-                    if not _is_noise(query) and query.lower() != topic.lower():
+                    value = _parse_value(row["value"])
+                    if not is_noise_filter(query) and query.lower() != topic.lower():
                         candidates.append((query, value))
 
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -50,7 +63,7 @@ def get_trending_hashtags(topic: str) -> list[str]:
         hashtags = []
         for query, _ in candidates:
             tag = _to_hashtag(query)
-            if tag.lower() not in seen:
+            if tag and tag != "#" and tag.lower() not in seen:
                 seen.add(tag.lower())
                 hashtags.append(tag)
             if len(hashtags) == 3:
@@ -60,6 +73,6 @@ def get_trending_hashtags(topic: str) -> list[str]:
             return hashtags
 
     except Exception:
-        pass
+        logger.warning("Trending hashtag fetch failed for topic=%r", topic, exc_info=True)
 
     return FALLBACK_HASHTAGS
