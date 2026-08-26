@@ -105,7 +105,9 @@ def group_into_captions(
     max_chars: int = 24,
 ) -> list[dict]:
     """Group words into short on-screen caption chunks (a few words each,
-    breaking early on sentence-ending punctuation)."""
+    breaking early on sentence-ending punctuation).  Each group carries
+    its individual word timings so the renderer can highlight one word
+    at a time."""
     groups: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
@@ -129,6 +131,7 @@ def group_into_captions(
             "text": " ".join(w["text"] for w in group),
             "start": group[0]["start"],
             "end": group[-1]["end"],
+            "words": group,
         }
         for group in groups
     ]
@@ -151,11 +154,18 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,DejaVu Sans,{fontsize},&H00FFFFFF,&H00000000,&H00000000,-1,0,1,{outline},0,2,60,60,{margin_v},1
+Style: Caption,Montserrat,{fontsize},&H00FFFFFF,&H00000000,&H80000000,-1,0,1,{outline},1,5,60,60,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+
+_HIGHLIGHT_COLOR = "&H0000FFFF&"
+_NORMAL_COLOR = "&H00FFFFFF&"
+
+
+def _sanitize(text: str) -> str:
+    return text.replace("\\", "").replace("{", "").replace("}", "").replace("\n", " ")
 
 
 def write_ass_file(
@@ -165,8 +175,8 @@ def write_ass_file(
     path: str,
     time_scale: float = 1.0,
 ) -> None:
-    """Write an ASS subtitle file styled as bold, centered, outlined
-    captions positioned in the lower-middle third of the frame.
+    """Write an ASS subtitle file with word-by-word yellow highlight,
+    Montserrat Bold, centered vertically.
 
     Args:
         time_scale: multiply every caption timestamp by this factor. Use
@@ -174,24 +184,48 @@ def write_ass_file(
             by atempo) to fit the final video length — pass 1 / tempo so
             captions stay in sync with the speech.
     """
-    fontsize = round(height * 0.055)
-    outline = max(2, round(fontsize * 0.07))
-    margin_v = round(height * 0.38)
+    fontsize = round(height * 0.07)
+    outline = max(3, round(fontsize * 0.08))
 
     lines = [_ASS_TEMPLATE.format(
-        width=width, height=height, fontsize=fontsize,
-        outline=outline, margin_v=margin_v,
+        width=width, height=height, fontsize=fontsize, outline=outline,
     )]
     for cap in captions:
-        start = cap["start"] * time_scale
-        end = cap["end"] * time_scale
-        if end <= start:
-            end = start + 0.3
-        text = cap["text"].replace("\\", "").replace("{", "").replace("}", "").replace("\n", " ")
-        lines.append(
-            f"Dialogue: 0,{_ass_timestamp(start)},{_ass_timestamp(end)},"
-            f"Caption,,0,0,0,,{text}\n"
-        )
+        cap_words = cap.get("words", [])
+        if not cap_words:
+            start = cap["start"] * time_scale
+            end = cap["end"] * time_scale
+            if end <= start:
+                end = start + 0.3
+            text = _sanitize(cap["text"])
+            lines.append(
+                f"Dialogue: 0,{_ass_timestamp(start)},{_ass_timestamp(end)},"
+                f"Caption,,0,0,0,,{text}\n"
+            )
+            continue
+
+        for wi, active_word in enumerate(cap_words):
+            w_start = active_word["start"] * time_scale
+            if wi + 1 < len(cap_words):
+                w_end = cap_words[wi + 1]["start"] * time_scale
+            else:
+                w_end = cap["end"] * time_scale
+            if w_end <= w_start:
+                w_end = w_start + 0.3
+
+            parts = []
+            for wj, w in enumerate(cap_words):
+                clean = _sanitize(w["text"])
+                if wj == wi:
+                    parts.append("{\\c" + _HIGHLIGHT_COLOR + "}" + clean)
+                else:
+                    parts.append("{\\c" + _NORMAL_COLOR + "}" + clean)
+            text = " ".join(parts)
+
+            lines.append(
+                f"Dialogue: 0,{_ass_timestamp(w_start)},{_ass_timestamp(w_end)},"
+                f"Caption,,0,0,0,,{text}\n"
+            )
 
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(lines)
