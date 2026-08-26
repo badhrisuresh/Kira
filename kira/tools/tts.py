@@ -1,18 +1,18 @@
 import fal_client
 
 # Fixed voice / delivery — only the spoken prompt varies per video.
-_DEFAULT_VOICE = "Charon"
+_DEFAULT_VOICE = "Kore"
 _DEFAULT_STYLE = (
-    "Deep, warm, authoritative male voice with a calm, measured delivery, "
-    "inspired by the gravitas of Morgan Freeman. Cinematic documentary "
-    "narration in the style of National Geographic or Discovery science "
-    "documentaries—intelligent, immersive, and quietly captivating."
+    "Clear, warm female voice with a calm, confident, measured delivery. "
+    "Cinematic documentary narration in the style of National Geographic "
+    "or Discovery science documentaries—intelligent, immersive, and "
+    "quietly captivating."
 )
 
 
 def generate_voiceover(prompt: str) -> str:
     """Generate a full-video voiceover MP3 from narration text using
-    fal-ai/gemini-3.1-flash-tts (Charon voice).
+    fal-ai/gemini-3.1-flash-tts (Kore voice).
 
     Args:
         prompt: The complete spoken narration for the Short — all shots
