@@ -16,7 +16,7 @@ Return the script in EXACTLY this structure:
 
 ```
 TITLE: [YouTube title, under 60 chars, include #Shorts]
-DESCRIPTION: [2-3 lines for YouTube — hashtags, source citation, one-liner]
+DESCRIPTION: [2-3 lines for YouTube — source citation, one-liner. Do NOT add hashtags — they are added automatically.]
 TOTAL DURATION: [15-20 seconds]
 HOOK TYPE: [question | statement | visual | contrast]
 
