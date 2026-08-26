@@ -8,6 +8,7 @@ subtitle file for ffmpeg's `ass` filter to burn in.
 """
 
 import difflib
+import os
 import re
 
 import fal_client
@@ -159,6 +160,13 @@ Style: Caption,Montserrat,{fontsize},&H00FFFFFF,&H00000000,&H80000000,-1,0,1,{ou
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+
+_FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+
+
+def get_fontsdir() -> str:
+    """Return the path to the bundled fonts directory for ffmpeg's ass filter."""
+    return _FONTS_DIR
 
 _HIGHLIGHT_COLOR = "&H0000FFFF&"
 _NORMAL_COLOR = "&H00FFFFFF&"

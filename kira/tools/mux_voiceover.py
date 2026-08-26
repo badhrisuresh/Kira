@@ -11,6 +11,7 @@ from .audio_utils import (
     tempo_for_duration,
 )
 from .captions import (
+    get_fontsdir,
     group_into_captions,
     reconcile_with_script,
     transcribe_words,
@@ -88,7 +89,9 @@ def fit_and_mux_audio(
     )
 
     if has_captions:
-        filter_complex = f"[0:v]ass={ass_path}[v];{audio_filter}"
+        ass_esc = ass_path.replace("\\", "/")
+        fontsdir = get_fontsdir().replace("\\", "/")
+        filter_complex = f"[0:v]ass='{ass_esc}':fontsdir='{fontsdir}'[v];{audio_filter}"
         video_args = ["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
     else:
         filter_complex = audio_filter
