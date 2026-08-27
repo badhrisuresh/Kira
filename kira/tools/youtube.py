@@ -63,7 +63,10 @@ def upload_to_youtube(video_url: str, title: str, description: str) -> str:
                 "description": description,
                 "categoryId": "22",
             },
-            "status": {"privacyStatus": "private"},
+            "status": {
+                "privacyStatus": "private",
+                "containsSyntheticMedia": True,
+            },
         },
         media_body=MediaFileUpload(local_path, resumable=True),
     )
