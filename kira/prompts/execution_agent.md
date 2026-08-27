@@ -82,7 +82,7 @@ URL / downloaded path directly.
 Call upload_to_youtube() with:
 - video_url: the file path from Phase 5 (muxed video)
 - title: from the script (must include #Shorts)
-- description: from the script (include source citation and hashtags)
+- description: from the script (include source citation; do NOT add hashtags — they are appended automatically)
 
 ## PHASE 7 — MEMORY
 

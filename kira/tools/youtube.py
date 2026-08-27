@@ -2,12 +2,15 @@ import base64
 import json
 import os
 import pickle
+import re
 import urllib.request
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+from .hashtags import get_trending_hashtags
 
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "token.pickle")
 
@@ -53,6 +56,11 @@ def upload_to_youtube(video_url: str, title: str, description: str) -> str:
         if not os.environ.get("YOUTUBE_TOKEN_JSON"):
             with open(TOKEN_FILE, "wb") as f:
                 pickle.dump(creds, f)
+
+    topic = re.sub(r"\s+", " ", re.sub(r"#\w+", "", title)).strip()
+    hashtags = get_trending_hashtags(topic)
+    hashtag_line = " ".join(["#Shorts"] + [h for h in hashtags if h.lower() != "#shorts"])
+    description = re.sub(r"#\w+", "", description).rstrip() + "\n\n" + hashtag_line
 
     youtube = build("youtube", "v3", credentials=creds)
     request = youtube.videos().insert(
