@@ -333,7 +333,7 @@ async def get_status():
 
 
 def _parse_multiple_proposals(raw_text: str) -> list[dict]:
-    """Parse 3 proposals from agent response into a list of dicts."""
+    """Parse up to 6 proposals from agent response into a list of dicts."""
     splits = re.split(
         r'(?:^|\n)\s*(?:#{1,4}\s*)?(?:\*\*)?(?:Option|Proposal|Topic)\s*(\d)[\s.:—\-\)]+',
         raw_text, flags=re.IGNORECASE
@@ -357,7 +357,7 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
             raw_text
         )
         if len(bold_topics) >= 2:
-            for bt in bold_topics[:3]:
+            for bt in bold_topics[:6]:
                 topic_clean = bt.strip().rstrip('.')
                 idx = raw_text.find(bt)
                 remaining = raw_text[idx + len(bt):]
@@ -396,7 +396,7 @@ def _parse_multiple_proposals(raw_text: str) -> list[dict]:
         single = _parse_proposal(raw_text)
         proposals = [single]
 
-    return proposals[:3]
+    return proposals[:6]
 
 
 @app.get("/api/propose")
@@ -417,7 +417,7 @@ async def propose():
     try:
         response = await _send_message(
             "What should we post today? Research trends, check memory, "
-            "and give me exactly 3 topic options to choose from. "
+            "and give me exactly 6 topic options to choose from. "
             "For each option, format as:\n"
             "1. **Topic Name** — one-line description of why this will work. "
             "(Source: citation)\n"
@@ -450,7 +450,7 @@ async def skip():
 
     try:
         response = await _send_message(
-            "None of those grab me. Give me 3 completely different topic options. "
+            "None of those grab me. Give me 6 completely different topic options. "
             "Same format: numbered, bold topic, one-line why, source."
         )
         proposals = _parse_multiple_proposals(response)

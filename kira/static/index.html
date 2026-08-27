@@ -482,7 +482,8 @@ body {
 
 /* ── Topic Cards ───────────────────────────────────────── */
 .cards-container {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   max-width: 960px;
   width: 100%;
@@ -490,7 +491,7 @@ body {
 }
 
 @media (max-width: 768px) {
-  .cards-container { flex-direction: column; max-width: 420px; }
+  .cards-container { grid-template-columns: 1fr; max-width: 420px; }
 }
 
 .topic-card {
@@ -871,7 +872,7 @@ body {
     <div class="hero-sub">Autonomous Video Studio</div>
 
     <div id="stateIdle">
-      <button class="cta-btn" onclick="propose()">What should we post today?</button>
+      <button class="cta-btn" onclick="propose()">Propose topics</button>
     </div>
 
     <div id="stateLoading" class="hidden">
