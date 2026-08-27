@@ -21,8 +21,8 @@ if os.path.exists(_env_path):
     load_dotenv(_env_path)
     logging.info(f"Loaded .env from {_env_path}")
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from google.adk.runners import Runner
@@ -813,6 +813,20 @@ async def delete_block_route(block_id: str):
         return {"status": "ok", "message": f"Block '{block_id}' deleted."}
     except FileNotFoundError:
         return JSONResponse({"error": f"Block '{block_id}' not found."}, status_code=404)
+
+
+# ── WhatsApp (Twilio) webhook ────────────────────────────────────
+
+@app.post("/whatsapp")
+async def whatsapp_webhook(Body: str = Form(""), From: str = Form("")):
+    from twilio.twiml.messaging_response import MessagingResponse
+
+    logger.info(f"WhatsApp message from {From}: {Body}")
+    reply_text = await _send_message(Body)
+
+    twiml = MessagingResponse()
+    twiml.message(reply_text)
+    return Response(content=str(twiml), media_type="application/xml")
 
 
 # ── Entry point ───────────────────────────────────────────────────
