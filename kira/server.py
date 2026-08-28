@@ -11,8 +11,10 @@ import json
 import logging
 import os
 import re
+import time
 import traceback
 from contextlib import asynccontextmanager
+from xml.sax.saxutils import escape as xml_escape
 from dotenv import load_dotenv
 
 # Load .env from the kira package directory (same as ADK does)
@@ -22,7 +24,7 @@ if os.path.exists(_env_path):
     logging.info(f"Loaded .env from {_env_path}")
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from google.adk.runners import Runner
@@ -78,6 +80,59 @@ _TOOL_TO_PHASE = {
     "write_memory": "memory",
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
+
+# ── WhatsApp per-user sessions ───────────────────────────────────
+
+SESSION_GAP_SECONDS = 4 * 3600  # 4 hours of silence → new session
+
+_wa_sessions: dict[str, dict] = {}
+
+
+async def _get_wa_session(phone: str):
+    """Get or rotate an ADK session for a WhatsApp user."""
+    now = time.time()
+    entry = _wa_sessions.get(phone)
+
+    if entry and (now - entry["last_active"]) < SESSION_GAP_SECONDS:
+        entry["last_active"] = now
+        session = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=entry["user_id"],
+            session_id=entry["session_id"],
+        )
+        if session:
+            return session, entry
+
+    user_id = f"wa_{phone.replace('whatsapp:', '').replace('+', '')}"
+    session = await session_service.create_session(
+        app_name=APP_NAME, user_id=user_id,
+    )
+    entry = {
+        "session_id": session.id,
+        "user_id": user_id,
+        "last_active": now,
+        "status": "idle",
+        "production_result": None,
+        "is_new": True,
+        "processing": False,
+        "pending_reply": None,
+    }
+    _wa_sessions[phone] = entry
+    return session, entry
+
+
+def _format_for_whatsapp(text: str) -> str:
+    """Convert markdown → WhatsApp-friendly plain text, respecting the
+    1600-char Twilio limit."""
+    text = re.sub(r'^#{1,4}\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*([^*]+)\*\*', r'*\1*', text)
+    text = re.sub(r'^\s*[-•]\s*', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
+    if len(text) > 1500:
+        text = text[:1497] + "..."
+    return text
+
 
 # ── Helpers ───────────────────────────────────────────────────────
 
@@ -668,6 +723,183 @@ async def chat(request: Request):
         reply = "Something went wrong on my end. Try again?"
 
     return {"reply": reply, "producing": production_launched}
+
+
+# ── WhatsApp / Twilio webhook ────────────────────────────────────
+
+async def _wa_background_send(entry: dict, session, text: str):
+    """Process a WhatsApp message in the background (fire-and-forget).
+    Stores the agent's reply so it can be delivered on the next message."""
+    entry["processing"] = True
+    try:
+        content = genai_types.Content(
+            role="user", parts=[genai_types.Part(text=text)],
+        )
+        parts: list[str] = []
+        async for event in runner.run_async(
+            user_id=entry["user_id"],
+            session_id=session.id,
+            new_message=content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        parts.append(part.text)
+        if parts:
+            entry["pending_reply"] = "\n".join(parts)
+    except Exception as e:
+        logger.error(f"WhatsApp background send failed: {e}")
+    finally:
+        entry["processing"] = False
+
+
+@app.post("/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """Twilio WhatsApp webhook — receives form-encoded messages,
+    returns TwiML XML responses.  Per-user sessions rotate after
+    SESSION_GAP_SECONDS of silence."""
+    form = await request.form()
+    body = (form.get("Body") or "").strip()
+    from_number = form.get("From") or ""
+
+    if not body or not from_number:
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+            media_type="application/xml",
+        )
+
+    logger.info(f"WhatsApp from {from_number}: {body[:80]}")
+
+    session, entry = await _get_wa_session(from_number)
+
+    # ── Brand-new session → instant greeting, warm up in background ──
+    if entry.get("is_new"):
+        entry["is_new"] = False
+        asyncio.create_task(_wa_background_send(entry, session, body))
+        return _twiml(
+            "Hey! I'm Kira — your AI content strategist.\n\n"
+            "I'm checking today's trends right now. "
+            "Send me another message in a few seconds and I'll have ideas ready!"
+        )
+
+    # ── Deliver a pending reply from a previous background run ───
+    if entry.get("pending_reply"):
+        reply = entry.pop("pending_reply")
+        return _twiml(reply)
+
+    # ── Previous message still processing ────────────────────
+    if entry.get("processing"):
+        return _twiml("Almost there — try again in a few seconds!")
+
+    # ── If production just finished, deliver the result ──────
+    if entry["status"] == "done" and entry["production_result"]:
+        result = entry["production_result"]
+        entry["status"] = "idle"
+        entry["production_result"] = None
+        url = result.get("youtube_url", "")
+        reply = f"Your video is live!\n{url}" if url else "Video production is complete!"
+        return _twiml(reply)
+
+    # ── If production is still running ───────────────────────
+    if entry["status"] == "producing":
+        return _twiml(
+            "Still working on your video — I'll have it ready soon! "
+            "Message me again in a few minutes to check."
+        )
+
+    # ── Normal conversational flow ───────────────────────────
+    content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=body)],
+    )
+
+    reply_parts: list[str] = []
+    production_launched = False
+    reply_ready = asyncio.Event()
+    timed_out = False
+
+    async def _process():
+        nonlocal production_launched
+        try:
+            async for event in runner.run_async(
+                user_id=entry["user_id"],
+                session_id=session.id,
+                new_message=content,
+            ):
+                if not event.content or not event.content.parts:
+                    continue
+                for part in event.content.parts:
+                    if part.text and not production_launched:
+                        reply_parts.append(part.text)
+
+                    if hasattr(part, "function_call") and part.function_call:
+                        if part.function_call.name in _PRODUCTION_TOOLS and not production_launched:
+                            production_launched = True
+                            entry["status"] = "producing"
+                            reply_ready.set()
+
+                    if (
+                        production_launched
+                        and hasattr(part, "function_response")
+                        and part.function_response
+                        and part.function_response.name == "upload_to_youtube"
+                    ):
+                        resp = part.function_response.response
+                        if isinstance(resp, dict):
+                            for v in resp.values():
+                                if isinstance(v, str) and "youtube" in v:
+                                    entry["production_result"] = {"youtube_url": v}
+
+            if production_launched:
+                if not entry.get("production_result"):
+                    full = "\n".join(reply_parts)
+                    yt = re.search(r'youtube\.com/shorts/([A-Za-z0-9_-]{11})', full)
+                    if yt:
+                        entry["production_result"] = {
+                            "youtube_url": f"https://youtube.com/shorts/{yt.group(1)}"
+                        }
+                entry["status"] = "done"
+
+        except Exception as e:
+            logger.error(f"WhatsApp processing failed: {e}\n{traceback.format_exc()}")
+            entry["status"] = "idle"
+        finally:
+            if timed_out and reply_parts and not production_launched:
+                entry["pending_reply"] = "\n".join(reply_parts)
+            if not reply_ready.is_set():
+                reply_ready.set()
+
+    asyncio.create_task(_process())
+
+    try:
+        await asyncio.wait_for(reply_ready.wait(), timeout=14)
+    except asyncio.TimeoutError:
+        timed_out = True
+        return _twiml(
+            "Still pulling that together — send another message "
+            "in a few seconds and I'll have your answer!"
+        )
+
+    reply = "\n".join(reply_parts) or "Hmm, let me think about that."
+
+    if production_launched:
+        reply = (
+            reply.rstrip()
+            + "\n\nStarting production now! I'll have your video ready "
+            "in a few minutes. Message me to check on progress."
+        )
+
+    return _twiml(reply)
+
+
+def _twiml(text: str) -> Response:
+    """Wrap a plain-text reply in TwiML XML for Twilio."""
+    text = _format_for_whatsapp(text)
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<Response><Message>{xml_escape(text)}</Message></Response>"
+    )
+    return Response(content=body, media_type="application/xml")
 
 
 @app.post("/api/approve")
