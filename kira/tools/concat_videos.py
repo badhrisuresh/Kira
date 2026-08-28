@@ -1,8 +1,12 @@
+import logging
 import os
 import subprocess
+import tempfile
 import uuid
 
 import requests
+
+log = logging.getLogger(__name__)
 
 
 def concat_videos(video_urls: list[str]) -> str:
@@ -17,39 +21,39 @@ def concat_videos(video_urls: list[str]) -> str:
     Returns: Local file path of the concatenated video (e.g.
         /tmp/kira_final_abc123.mp4). Pass this path directly to
         upload_to_youtube()."""
+    _tmp = tempfile.gettempdir()
+
     if len(video_urls) == 1:
-        # Single clip — just download, no concat needed.
-        path = f"/tmp/kira_final_{uuid.uuid4().hex[:6]}.mp4"
+        path = os.path.join(_tmp, f"kira_final_{uuid.uuid4().hex[:6]}.mp4")
         _download(video_urls[0], path)
         return path
 
-    # Download all clips.
     clip_paths = []
     for i, url in enumerate(video_urls):
-        path = f"/tmp/kira_clip_{i}_{uuid.uuid4().hex[:6]}.mp4"
+        path = os.path.join(_tmp, f"kira_clip_{i}_{uuid.uuid4().hex[:6]}.mp4")
         _download(url, path)
         clip_paths.append(path)
 
-    # Build ffmpeg concat demuxer file.
-    concat_list = f"/tmp/kira_concat_{uuid.uuid4().hex[:6]}.txt"
+    concat_list = os.path.join(_tmp, f"kira_concat_{uuid.uuid4().hex[:6]}.txt")
     with open(concat_list, "w") as f:
         for path in clip_paths:
             f.write(f"file '{path}'\n")
 
-    output_path = f"/tmp/kira_final_{uuid.uuid4().hex[:6]}.mp4"
+    output_path = os.path.join(_tmp, f"kira_final_{uuid.uuid4().hex[:6]}.mp4")
 
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_list,
-            "-c", "copy",
-            output_path,
-        ],
-        check=True,
-        capture_output=True,
-    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_list,
+        "-c", "copy",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        log.error("ffmpeg concat failed (exit %s):\n%s", result.returncode,
+                  result.stderr.decode(errors="replace"))
+        result.check_returncode()
 
     # Cleanup intermediates.
     for path in clip_paths:
