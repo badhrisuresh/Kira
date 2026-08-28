@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Kira Chat</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #0a0a12;
+  color: #fff;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  background: #111;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #222;
+}
+
+header .avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #6C5CE7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 18px;
+}
+
+header .info h1 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+header .info span {
+  font-size: 12px;
+  color: #888;
+}
+
+#status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00D68F;
+  display: inline-block;
+  margin-right: 4px;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: #6C5CE7;
+  border-bottom-right-radius: 4px;
+}
+
+.msg.kira {
+  align-self: flex-start;
+  background: #1e1e2e;
+  border-bottom-left-radius: 4px;
+}
+
+.msg.kira .label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #A29BFE;
+  margin-bottom: 4px;
+}
+
+.msg.typing {
+  color: #888;
+  font-style: italic;
+}
+
+#input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #111;
+  border-top: 1px solid #222;
+}
+
+#input-bar input {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 24px;
+  border: 1px solid #333;
+  background: #1a1a2e;
+  color: #fff;
+  font-size: 15px;
+  outline: none;
+}
+
+#input-bar input:focus {
+  border-color: #6C5CE7;
+}
+
+#input-bar input::placeholder {
+  color: #555;
+}
+
+#input-bar button {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: #6C5CE7;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#input-bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#production-banner {
+  display: none;
+  background: #1a1a2e;
+  border-top: 1px solid #333;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: #A29BFE;
+  text-align: center;
+}
+
+#production-banner.active {
+  display: block;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="avatar">K</div>
+  <div class="info">
+    <h1>Kira</h1>
+    <span><span id="status-dot"></span><span id="status-text">Online</span></span>
+  </div>
+</header>
+
+<div id="messages"></div>
+
+<div id="production-banner"></div>
+
+<div id="input-bar">
+  <input type="text" id="msg-input" placeholder="Message Kira..." autocomplete="off" />
+  <button id="send-btn" onclick="send()">&#9654;</button>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('msg-input');
+const sendBtn = document.getElementById('send-btn');
+const statusText = document.getElementById('status-text');
+const statusDot = document.getElementById('status-dot');
+const banner = document.getElementById('production-banner');
+
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !sendBtn.disabled) send();
+});
+
+function addMsg(text, role) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  if (role === 'kira') {
+    div.innerHTML = `<div class="label">Kira</div>${escapeHtml(text)}`;
+  } else {
+    div.textContent = text;
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function escapeHtml(t) {
+  const d = document.createElement('div');
+  d.textContent = t;
+  return d.innerHTML;
+}
+
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  addMsg(text, 'user');
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  statusText.textContent = 'Typing...';
+  statusDot.style.background = '#FFD93D';
+
+  const typing = addMsg('...', 'typing');
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    const data = await res.json();
+
+    typing.remove();
+
+    if (data.error) {
+      addMsg(`Error: ${data.error}`, 'kira');
+    } else {
+      addMsg(data.reply, 'kira');
+    }
+
+    if (data.producing) {
+      banner.textContent = '🎬 Production running in background...';
+      banner.classList.add('active');
+      pollProduction();
+    }
+  } catch (err) {
+    typing.remove();
+    addMsg(`Network error: ${err.message}`, 'kira');
+  }
+
+  sendBtn.disabled = false;
+  statusText.textContent = 'Online';
+  statusDot.style.background = '#00D68F';
+}
+
+async function pollProduction() {
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+
+      if (data.status === 'done') {
+        clearInterval(interval);
+        banner.classList.remove('active');
+        const result = data.result;
+        if (result && result.youtube_url) {
+          addMsg(`Done! Video is live:\n${result.youtube_url}`, 'kira');
+        } else {
+          addMsg('Production finished!', 'kira');
+        }
+      } else if (data.status === 'error') {
+        clearInterval(interval);
+        banner.classList.remove('active');
+        addMsg(`Production failed: ${data.error || 'unknown error'}`, 'kira');
+      } else {
+        const phases = data.phases || [];
+        const current = phases.filter(p => p.status === 'in_progress');
+        if (current.length > 0) {
+          banner.textContent = `🎬 ${current[current.length - 1].detail}`;
+        }
+      }
+    } catch (e) {}
+  }, 3000);
+}
+</script>
+
+</body>
+</html>

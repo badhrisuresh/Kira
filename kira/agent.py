@@ -117,7 +117,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     web_trends_agent = LlmAgent(
         name="web_trends_search",
         model=MODEL,
-        mode="single_turn",
+
         description=(
             "Searches the live web for current trending news and events "
             f"relevant to: {block_config['name']}. Use this when "
@@ -126,18 +126,13 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         ),
         instruction=load_block_prompt("web_trends_agent.md"),
         tools=[google_search],
-        generate_content_config=types.GenerateContentConfig(
-            tool_config=types.ToolConfig(
-                include_server_side_tool_invocations=True,
-            ),
-        ),
     )
 
     # ── Script Writer sub-agent ──────────────────────────────
     script_writer_agent = LlmAgent(
         name="script_writer",
         model=MODEL,
-        mode="single_turn",
+
         description=(
             "Expert short-form video scriptwriter. Takes a creative brief "
             "and returns a complete production-ready script with beat-by-beat "
@@ -153,7 +148,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     production_planner_agent = LlmAgent(
         name="production_planner",
         model=MODEL,
-        mode="single_turn",
+
         description=(
             "Video production planner. Takes a finished script and breaks it "
             "into a shot-by-shot production spec: number of shots (2-4), "

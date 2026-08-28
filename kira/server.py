@@ -11,8 +11,10 @@ import json
 import logging
 import os
 import re
+import time
 import traceback
 from contextlib import asynccontextmanager
+from xml.sax.saxutils import escape as xml_escape
 from dotenv import load_dotenv
 
 # Load .env from the kira package directory (same as ADK does)
@@ -22,7 +24,7 @@ if os.path.exists(_env_path):
     logging.info(f"Loaded .env from {_env_path}")
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from google.adk.runners import Runner
@@ -61,6 +63,76 @@ _state = {
     "production_result": None,   # Final result after production
     "error": None,
 }
+
+# ── Tool-to-phase mapping (shared by /api/approve and /api/chat) ─
+
+_TOOL_TO_PHASE = {
+    "script_writer": "script",
+    "production_planner": "plan",
+    "generate_image": "image_gen",
+    "generate_video": "video_gen",
+    "concat_videos": "concat",
+    "generate_voiceover": "voiceover",
+    "generate_background_music": "music",
+    "fit_and_mux_audio": "mux",
+    "mux_music_only": "mux",
+    "upload_to_youtube": "upload",
+    "write_memory": "memory",
+}
+_PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
+
+# ── WhatsApp per-user sessions ───────────────────────────────────
+
+SESSION_GAP_SECONDS = 4 * 3600  # 4 hours of silence → new session
+
+_wa_sessions: dict[str, dict] = {}
+
+
+async def _get_wa_session(phone: str):
+    """Get or rotate an ADK session for a WhatsApp user."""
+    now = time.time()
+    entry = _wa_sessions.get(phone)
+
+    if entry and (now - entry["last_active"]) < SESSION_GAP_SECONDS:
+        entry["last_active"] = now
+        session = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=entry["user_id"],
+            session_id=entry["session_id"],
+        )
+        if session:
+            return session, entry
+
+    user_id = f"wa_{phone.replace('whatsapp:', '').replace('+', '')}"
+    session = await session_service.create_session(
+        app_name=APP_NAME, user_id=user_id,
+    )
+    entry = {
+        "session_id": session.id,
+        "user_id": user_id,
+        "last_active": now,
+        "status": "idle",
+        "production_result": None,
+        "is_new": True,
+        "processing": False,
+        "pending_reply": None,
+    }
+    _wa_sessions[phone] = entry
+    return session, entry
+
+
+def _format_for_whatsapp(text: str) -> str:
+    """Convert markdown → WhatsApp-friendly plain text, respecting the
+    1600-char Twilio limit."""
+    text = re.sub(r'^#{1,4}\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*([^*]+)\*\*', r'*\1*', text)
+    text = re.sub(r'^\s*[-•]\s*', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
+    if len(text) > 1500:
+        text = text[:1497] + "..."
+    return text
+
 
 # ── Helpers ───────────────────────────────────────────────────────
 
@@ -316,6 +388,12 @@ async def index():
         return HTMLResponse(f.read())
 
 
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_ui():
+    with open(os.path.join(STATIC_DIR, "chat.html")) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/api/status")
 async def get_status():
     return {
@@ -464,6 +542,366 @@ async def skip():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/chat")
+async def chat(request: Request):
+    """Conversational endpoint for WhatsApp / Twilio.
+    Sends the user's message to Kira and returns the reply.
+    If the conversation leads to a confirmed topic, production
+    starts in the background and the hand-off reply is returned
+    immediately."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON."}, status_code=400)
+
+    message = body.get("message", "").strip()
+    if not message:
+        return JSONResponse({"error": "No message provided."}, status_code=400)
+
+    if _state["status"] == "producing":
+        return {"reply": "Still working on the current video — I'll message you when it's live!"}
+
+    _state["error"] = None
+
+    session = await _get_or_create_session()
+    content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=message)],
+    )
+
+    reply_parts: list[str] = []
+    all_text: list[str] = []
+    reply_ready = asyncio.Event()
+    production_launched = False
+
+    async def _process():
+        nonlocal production_launched
+
+        phases = _get_phases()
+        phase_order = [p[0] for p in phases]
+        phase_labels = {p[0]: p[1] for p in phases}
+        current_phase_idx = 0
+
+        try:
+            async for event in runner.run_async(
+                user_id=_state["user_id"],
+                session_id=session.id,
+                new_message=content,
+            ):
+                if not event.content or not event.content.parts:
+                    continue
+
+                for part in event.content.parts:
+                    if part.text:
+                        all_text.append(part.text)
+                        if not production_launched:
+                            reply_parts.append(part.text)
+
+                    if hasattr(part, "function_call") and part.function_call:
+                        tool_name = part.function_call.name
+
+                        if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                            production_launched = True
+                            _state["status"] = "producing"
+                            _state["production_result"] = None
+                            await event_bus.clear()
+                            for pid, pname in phases:
+                                await event_bus.emit(ProductionEvent(
+                                    phase=pid, status="pending", detail=pname,
+                                ))
+                            reply_ready.set()
+
+                        if production_launched and tool_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[tool_name]
+                            if phase in phase_order:
+                                phase_idx = phase_order.index(phase)
+                                for i in range(current_phase_idx, phase_idx):
+                                    if phase_order[i] in phase_labels:
+                                        await event_bus.emit(ProductionEvent(
+                                            phase=phase_order[i],
+                                            status="completed",
+                                            detail=f"{phase_labels[phase_order[i]]} — done",
+                                            progress=1.0,
+                                        ))
+                                await event_bus.emit(ProductionEvent(
+                                    phase=phase,
+                                    status="in_progress",
+                                    detail=f"{phase_labels[phase]} ...",
+                                    progress=0.5,
+                                ))
+                                current_phase_idx = phase_idx
+
+                    if (
+                        production_launched
+                        and hasattr(part, "function_response")
+                        and part.function_response
+                    ):
+                        resp_name = part.function_response.name
+                        if resp_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[resp_name]
+                            if phase in phase_order:
+                                result_data = part.function_response.response
+                                preview = None
+                                if isinstance(result_data, dict):
+                                    for v in result_data.values():
+                                        if isinstance(v, str) and (
+                                            v.startswith("http")
+                                            and any(
+                                                ext in v.lower()
+                                                for ext in [".png", ".jpg", ".mp4", ".webm"]
+                                            )
+                                        ):
+                                            preview = v
+                                elif isinstance(result_data, str) and result_data.startswith("http"):
+                                    preview = result_data
+
+                                await event_bus.emit(ProductionEvent(
+                                    phase=phase,
+                                    status="completed",
+                                    detail=f"{phase_labels[phase]} — done",
+                                    progress=1.0,
+                                    preview_url=preview,
+                                ))
+                                current_phase_idx = phase_order.index(phase) + 1
+
+            if production_launched:
+                for i in range(current_phase_idx, len(phase_order)):
+                    await event_bus.emit(ProductionEvent(
+                        phase=phase_order[i],
+                        status="completed",
+                        detail=f"{phase_labels[phase_order[i]]} — done",
+                        progress=1.0,
+                    ))
+
+                full_response = "\n".join(all_text)
+                video_id = None
+                yt_match = re.search(
+                    r"(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})",
+                    full_response,
+                )
+                if yt_match:
+                    video_id = yt_match.group(1)
+
+                _state["production_result"] = {
+                    "response": full_response,
+                    "video_id": video_id,
+                    "youtube_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                }
+                _state["status"] = "done"
+                await event_bus.emit(ProductionEvent(
+                    phase="done",
+                    status="completed",
+                    detail="Production complete!",
+                    progress=1.0,
+                    preview_url=f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                ))
+
+        except Exception as e:
+            logger.error(f"Chat/production failed: {e}\n{traceback.format_exc()}")
+            if production_launched:
+                _state["status"] = "error"
+                _state["error"] = str(e)
+                await event_bus.emit(ProductionEvent(
+                    phase="error",
+                    status="error",
+                    detail="Production failed",
+                    error_message=str(e),
+                ))
+        finally:
+            if not reply_ready.is_set():
+                reply_ready.set()
+
+    asyncio.create_task(_process())
+
+    try:
+        await asyncio.wait_for(reply_ready.wait(), timeout=120)
+    except asyncio.TimeoutError:
+        return {"reply": "Hmm, taking longer than expected. Try again in a bit."}
+
+    reply = "\n".join(reply_parts)
+    if not reply:
+        reply = "Something went wrong on my end. Try again?"
+
+    return {"reply": reply, "producing": production_launched}
+
+
+# ── WhatsApp / Twilio webhook ────────────────────────────────────
+
+async def _wa_background_send(entry: dict, session, text: str):
+    """Process a WhatsApp message in the background (fire-and-forget).
+    Stores the agent's reply so it can be delivered on the next message."""
+    entry["processing"] = True
+    try:
+        content = genai_types.Content(
+            role="user", parts=[genai_types.Part(text=text)],
+        )
+        parts: list[str] = []
+        async for event in runner.run_async(
+            user_id=entry["user_id"],
+            session_id=session.id,
+            new_message=content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        parts.append(part.text)
+        if parts:
+            entry["pending_reply"] = "\n".join(parts)
+    except Exception as e:
+        logger.error(f"WhatsApp background send failed: {e}")
+    finally:
+        entry["processing"] = False
+
+
+@app.post("/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """Twilio WhatsApp webhook — receives form-encoded messages,
+    returns TwiML XML responses.  Per-user sessions rotate after
+    SESSION_GAP_SECONDS of silence."""
+    form = await request.form()
+    body = (form.get("Body") or "").strip()
+    from_number = form.get("From") or ""
+
+    if not body or not from_number:
+        return Response(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+            media_type="application/xml",
+        )
+
+    logger.info(f"WhatsApp from {from_number}: {body[:80]}")
+
+    session, entry = await _get_wa_session(from_number)
+
+    # ── Brand-new session → instant greeting, warm up in background ──
+    if entry.get("is_new"):
+        entry["is_new"] = False
+        asyncio.create_task(_wa_background_send(entry, session, body))
+        return _twiml(
+            "Hey! I'm Kira — your AI content strategist.\n\n"
+            "I'm checking today's trends right now. "
+            "Send me another message in a few seconds and I'll have ideas ready!"
+        )
+
+    # ── Deliver a pending reply from a previous background run ───
+    if entry.get("pending_reply"):
+        reply = entry.pop("pending_reply")
+        return _twiml(reply)
+
+    # ── Previous message still processing ────────────────────
+    if entry.get("processing"):
+        return _twiml("Almost there — try again in a few seconds!")
+
+    # ── If production just finished, deliver the result ──────
+    if entry["status"] == "done" and entry["production_result"]:
+        result = entry["production_result"]
+        entry["status"] = "idle"
+        entry["production_result"] = None
+        url = result.get("youtube_url", "")
+        reply = f"Your video is live!\n{url}" if url else "Video production is complete!"
+        return _twiml(reply)
+
+    # ── If production is still running ───────────────────────
+    if entry["status"] == "producing":
+        return _twiml(
+            "Still working on your video — I'll have it ready soon! "
+            "Message me again in a few minutes to check."
+        )
+
+    # ── Normal conversational flow ───────────────────────────
+    content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=body)],
+    )
+
+    reply_parts: list[str] = []
+    production_launched = False
+    reply_ready = asyncio.Event()
+    timed_out = False
+
+    async def _process():
+        nonlocal production_launched
+        try:
+            async for event in runner.run_async(
+                user_id=entry["user_id"],
+                session_id=session.id,
+                new_message=content,
+            ):
+                if not event.content or not event.content.parts:
+                    continue
+                for part in event.content.parts:
+                    if part.text and not production_launched:
+                        reply_parts.append(part.text)
+
+                    if hasattr(part, "function_call") and part.function_call:
+                        if part.function_call.name in _PRODUCTION_TOOLS and not production_launched:
+                            production_launched = True
+                            entry["status"] = "producing"
+                            reply_ready.set()
+
+                    if (
+                        production_launched
+                        and hasattr(part, "function_response")
+                        and part.function_response
+                        and part.function_response.name == "upload_to_youtube"
+                    ):
+                        resp = part.function_response.response
+                        if isinstance(resp, dict):
+                            for v in resp.values():
+                                if isinstance(v, str) and "youtube" in v:
+                                    entry["production_result"] = {"youtube_url": v}
+
+            if production_launched:
+                if not entry.get("production_result"):
+                    full = "\n".join(reply_parts)
+                    yt = re.search(r'youtube\.com/shorts/([A-Za-z0-9_-]{11})', full)
+                    if yt:
+                        entry["production_result"] = {
+                            "youtube_url": f"https://youtube.com/shorts/{yt.group(1)}"
+                        }
+                entry["status"] = "done"
+
+        except Exception as e:
+            logger.error(f"WhatsApp processing failed: {e}\n{traceback.format_exc()}")
+            entry["status"] = "idle"
+        finally:
+            if timed_out and reply_parts and not production_launched:
+                entry["pending_reply"] = "\n".join(reply_parts)
+            if not reply_ready.is_set():
+                reply_ready.set()
+
+    asyncio.create_task(_process())
+
+    try:
+        await asyncio.wait_for(reply_ready.wait(), timeout=14)
+    except asyncio.TimeoutError:
+        timed_out = True
+        return _twiml(
+            "Still pulling that together — send another message "
+            "in a few seconds and I'll have your answer!"
+        )
+
+    reply = "\n".join(reply_parts) or "Hmm, let me think about that."
+
+    if production_launched:
+        reply = (
+            reply.rstrip()
+            + "\n\nStarting production now! I'll have your video ready "
+            "in a few minutes. Message me to check on progress."
+        )
+
+    return _twiml(reply)
+
+
+def _twiml(text: str) -> Response:
+    """Wrap a plain-text reply in TwiML XML for Twilio."""
+    text = _format_for_whatsapp(text)
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<Response><Message>{xml_escape(text)}</Message></Response>"
+    )
+    return Response(content=body, media_type="application/xml")
+
+
 @app.post("/api/approve")
 async def approve(request: Request):
     """Approve a chosen topic and start async production."""
@@ -523,21 +961,6 @@ async def _run_production():
         phase_labels = {p[0]: p[1] for p in phases}
         current_phase_idx = 0
 
-        # Map tool names to phases
-        tool_to_phase = {
-            "script_writer": "script",
-            "production_planner": "plan",
-            "generate_image": "image_gen",
-            "generate_video": "video_gen",
-            "concat_videos": "concat",
-            "generate_voiceover": "voiceover",
-            "generate_background_music": "music",
-            "fit_and_mux_audio": "mux",
-            "mux_music_only": "mux",
-            "upload_to_youtube": "upload",
-            "write_memory": "memory",
-        }
-
         response_parts = []
         async for event in runner.run_async(
             user_id=_state["user_id"],
@@ -551,8 +974,8 @@ async def _run_production():
 
                     if hasattr(part, 'function_call') and part.function_call:
                         tool_name = part.function_call.name
-                        if tool_name in tool_to_phase:
-                            phase = tool_to_phase[tool_name]
+                        if tool_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[tool_name]
                             if phase in phase_order:
                                 phase_idx = phase_order.index(phase)
                                 for i in range(current_phase_idx, phase_idx):
@@ -573,8 +996,8 @@ async def _run_production():
 
                     if hasattr(part, 'function_response') and part.function_response:
                         resp_name = part.function_response.name
-                        if resp_name in tool_to_phase:
-                            phase = tool_to_phase[resp_name]
+                        if resp_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[resp_name]
                             if phase in phase_order:
                                 result_data = part.function_response.response
                                 preview = None

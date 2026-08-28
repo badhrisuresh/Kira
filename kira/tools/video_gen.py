@@ -1,7 +1,7 @@
 import fal_client
 
 
-def generate_video(image_urls: list[str], prompt: str, duration: int | str = 8) -> str:
+def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str:
     """Generate a video clip from 1+ reference images using Gemini Omni
     Flash reference-to-video on fal.ai.
 

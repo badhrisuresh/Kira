@@ -70,7 +70,7 @@ AUDIO: …
 | 10–16s | ESCALATION #2 | Raise the stakes / introduce the "wait, WHAT?" moment. |
 | 16–21s | PAYOFF | Give the biggest reveal or visual. |
 | 21–24s | TWIST / IMPLICATION | Tell them why this is crazy/scary/important. |
-| 24–25s | LOOP | End in a way that connects naturally to the opening. |
+| 24–25s | LOOP | Visuals loop back to the opening shot. Narration is a COMPLETE closing line — no trailing "and…", "because…", "next…". |
 
 ## SCRIPTWRITING EXPERTISE
 
@@ -135,8 +135,13 @@ TENSION
   share.
 - **TWIST / IMPLICATION (21-24 s):** Tell them why this is
   crazy/scary/important. A provocative reframe or implication.
-- **LOOP (24-25 s):** End in a way that connects naturally to the
-  opening, making the viewer want to watch again.
+- **LOOP (24-25 s):** The VISUALS loop back to the opening shot
+  (same composition, colour, subject) so the replay is seamless.
+  But the NARRATION must be a complete, satisfying closing line —
+  a final punch, not a cliffhanger. NEVER trail off with "And…",
+  "Because…", "Next…", or any incomplete sentence. End with
+  authority. Good examples: "And it happens every single day."
+  / "The universe doesn't care." / "We're already inside one."
 
 ### Narration Rules
 
@@ -153,6 +158,10 @@ TENSION
    "very". Every word earns its place.
 7. **Authority tone.** Confident, not lecturing. A smart friend telling
    you something wild — not a textbook.
+8. **Every sentence must be complete.** Never end a beat with a
+   trailing fragment ("And…", "Because…", "Next is…"). The last
+   line of the script must land like a closing statement, not a
+   cliffhanger.
 8. **Total word count.** Stay under 65 spoken words for the entire
    script. Aim for ~145 WPM against the planned duration (e.g. ~60
    words for a 25 s Short) so later TTS length matches the cut.
