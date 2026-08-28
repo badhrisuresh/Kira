@@ -1,0 +1,12 @@
+services:
+  kira:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - kira/.env
+    environment:
+      - PORT=8080
+    tmpfs:
+      - /tmp:size=512M
+    restart: unless-stopped

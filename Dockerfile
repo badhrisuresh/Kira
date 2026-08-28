@@ -9,5 +9,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY kira/ kira/
+COPY content_blocks/ content_blocks/
 
-CMD ["uvicorn", "kira.server:app", "--host", "0.0.0.0", "--port", "8080"]
+ENV PORT=8080
+
+CMD uvicorn kira.server:app --host 0.0.0.0 --port $PORT
