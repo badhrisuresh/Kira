@@ -333,6 +333,12 @@ async def index():
         return HTMLResponse(f.read())
 
 
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_ui():
+    with open(os.path.join(STATIC_DIR, "chat.html")) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/api/status")
 async def get_status():
     return {
