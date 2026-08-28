@@ -31,12 +31,56 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
+from twilio.rest import Client as TwilioClient
+
 from .agent import build_agents
 from . import block_manager
 from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
 
 logger = logging.getLogger(__name__)
+
+# ── Twilio outbound messaging ───────────────────────────────────
+
+_twilio_client: TwilioClient | None = None
+_twilio_from: str = ""
+
+def _init_twilio():
+    global _twilio_client, _twilio_from
+    sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_number = os.environ.get("TWILIO_WHATSAPP_NUMBER", "")
+    if sid and token and from_number:
+        _twilio_client = TwilioClient(sid, token)
+        _twilio_from = from_number
+        logger.info("Twilio client initialized for outbound WhatsApp")
+    else:
+        logger.warning(
+            "TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_NUMBER "
+            "not set — outbound WhatsApp messages disabled"
+        )
+
+_init_twilio()
+
+
+async def _wa_send(to: str, text: str):
+    """Push a WhatsApp message to the user via Twilio REST API."""
+    if not _twilio_client:
+        logger.warning("Cannot send outbound WhatsApp — Twilio not configured")
+        return
+    text = _format_for_whatsapp(text)
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _twilio_client.messages.create(
+                body=text,
+                from_=_twilio_from,
+                to=to,
+            ),
+        )
+        logger.info(f"Sent WhatsApp to {to}: {text[:60]}...")
+    except Exception as e:
+        logger.error(f"Failed to send WhatsApp to {to}: {e}")
 
 # ── ADK runner setup ──────────────────────────────────────────────
 
@@ -80,6 +124,14 @@ _TOOL_TO_PHASE = {
     "write_memory": "memory",
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
+
+# Phases worth a WhatsApp push (milestones, not every tool call)
+_WA_NOTIFY_PHASES = {"script", "concat", "mux"}
+_WA_MILESTONE_MESSAGES = {
+    "script": "Script is locked. Generating visuals now...",
+    "concat": "Video assembled. Adding music and audio...",
+    "mux": "Audio mixed. Uploading to YouTube now...",
+}
 
 # ── WhatsApp per-user sessions ───────────────────────────────────
 
@@ -727,28 +779,77 @@ async def chat(request: Request):
 
 # ── WhatsApp / Twilio webhook ────────────────────────────────────
 
-async def _wa_background_send(entry: dict, session, text: str):
-    """Process a WhatsApp message in the background (fire-and-forget).
-    Stores the agent's reply so it can be delivered on the next message."""
+async def _wa_background_send(phone: str, entry: dict, session, text: str):
+    """Process a WhatsApp message in the background and push the reply."""
     entry["processing"] = True
     try:
         content = genai_types.Content(
             role="user", parts=[genai_types.Part(text=text)],
         )
-        parts: list[str] = []
+        reply_parts: list[str] = []
+        all_text: list[str] = []
+        production_launched = False
+
         async for event in runner.run_async(
             user_id=entry["user_id"],
             session_id=session.id,
             new_message=content,
         ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        parts.append(part.text)
-        if parts:
-            entry["pending_reply"] = "\n".join(parts)
+            if not event.content or not event.content.parts:
+                continue
+            for part in event.content.parts:
+                if part.text:
+                    all_text.append(part.text)
+                    if not production_launched:
+                        reply_parts.append(part.text)
+
+                if hasattr(part, "function_call") and part.function_call:
+                    tool_name = part.function_call.name
+                    if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                        production_launched = True
+                        entry["status"] = "producing"
+                        if reply_parts:
+                            await _wa_send(phone, "\n".join(reply_parts))
+                            reply_parts.clear()
+                        await _wa_send(
+                            phone,
+                            "Starting production now — I'll keep you posted as each step finishes.",
+                        )
+
+                if (
+                    production_launched
+                    and hasattr(part, "function_response")
+                    and part.function_response
+                    and part.function_response.name in _TOOL_TO_PHASE
+                ):
+                    phase = _TOOL_TO_PHASE[part.function_response.name]
+                    if phase in _WA_NOTIFY_PHASES:
+                        msg = _WA_MILESTONE_MESSAGES.get(phase)
+                        if msg:
+                            await _wa_send(phone, msg)
+
+        if production_launched:
+            yt_url = None
+            full = "\n".join(all_text)
+            yt_match = re.search(
+                r"(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})",
+                full,
+            )
+            if yt_match:
+                yt_url = f"https://youtube.com/shorts/{yt_match.group(1)}"
+
+            entry["production_result"] = {"youtube_url": yt_url}
+            entry["status"] = "done"
+            if yt_url:
+                await _wa_send(phone, f"Your video is live!\n{yt_url}")
+            else:
+                await _wa_send(phone, "Production complete! Check your YouTube channel.")
+        elif reply_parts:
+            await _wa_send(phone, "\n".join(reply_parts))
+
     except Exception as e:
-        logger.error(f"WhatsApp background send failed: {e}")
+        logger.error(f"WhatsApp background send failed: {e}\n{traceback.format_exc()}")
+        await _wa_send(phone, "Something went wrong on my end. Send me a message to try again.")
     finally:
         entry["processing"] = False
 
@@ -757,7 +858,12 @@ async def _wa_background_send(entry: dict, session, text: str):
 async def whatsapp_webhook(request: Request):
     """Twilio WhatsApp webhook — receives form-encoded messages,
     returns TwiML XML responses.  Per-user sessions rotate after
-    SESSION_GAP_SECONDS of silence."""
+    SESSION_GAP_SECONDS of silence.
+
+    With outbound Twilio configured, long-running work (trend research,
+    production) runs in the background and Kira pushes updates to the
+    user proactively.  Without Twilio outbound, falls back to the old
+    pull-based flow."""
     form = await request.form()
     body = (form.get("Body") or "").strip()
     from_number = form.get("From") or ""
@@ -772,42 +878,25 @@ async def whatsapp_webhook(request: Request):
 
     session, entry = await _get_wa_session(from_number)
 
-    # ── Brand-new session → instant greeting, warm up in background ──
+    # ── Brand-new session greeting ───────────────────────────
     if entry.get("is_new"):
         entry["is_new"] = False
-        asyncio.create_task(_wa_background_send(entry, session, body))
+        asyncio.create_task(_wa_background_send(from_number, entry, session, body))
         return _twiml(
             "Hey! I'm Kira — your AI content strategist.\n\n"
-            "I'm checking today's trends right now. "
-            "Send me another message in a few seconds and I'll have ideas ready!"
+            "Checking today's trends right now. I'll send you "
+            "what I find in a moment."
         )
 
-    # ── Deliver a pending reply from a previous background run ───
-    if entry.get("pending_reply"):
-        reply = entry.pop("pending_reply")
-        return _twiml(reply)
-
-    # ── Previous message still processing ────────────────────
+    # ── Still processing a previous message ──────────────────
     if entry.get("processing"):
-        return _twiml("Almost there — try again in a few seconds!")
-
-    # ── If production just finished, deliver the result ──────
-    if entry["status"] == "done" and entry["production_result"]:
-        result = entry["production_result"]
-        entry["status"] = "idle"
-        entry["production_result"] = None
-        url = result.get("youtube_url", "")
-        reply = f"Your video is live!\n{url}" if url else "Video production is complete!"
-        return _twiml(reply)
-
-    # ── If production is still running ───────────────────────
-    if entry["status"] == "producing":
         return _twiml(
-            "Still working on your video — I'll have it ready soon! "
-            "Message me again in a few minutes to check."
+            "Still working on it — I'll message you as soon as I'm done."
         )
 
     # ── Normal conversational flow ───────────────────────────
+    # Kick off background processing and reply inline if fast enough,
+    # otherwise acknowledge and push the reply when ready.
     content = genai_types.Content(
         role="user",
         parts=[genai_types.Part(text=body)],
@@ -820,6 +909,7 @@ async def whatsapp_webhook(request: Request):
 
     async def _process():
         nonlocal production_launched
+        entry["processing"] = True
         try:
             async for event in runner.run_async(
                 user_id=entry["user_id"],
@@ -838,17 +928,34 @@ async def whatsapp_webhook(request: Request):
                             entry["status"] = "producing"
                             reply_ready.set()
 
+                            if _twilio_client:
+                                pre_reply = "\n".join(reply_parts).strip()
+                                if pre_reply:
+                                    await _wa_send(from_number, pre_reply)
+                                await _wa_send(
+                                    from_number,
+                                    "Starting production now — I'll keep you posted as each step finishes.",
+                                )
+                                reply_parts.clear()
+
                     if (
                         production_launched
                         and hasattr(part, "function_response")
                         and part.function_response
-                        and part.function_response.name == "upload_to_youtube"
+                        and part.function_response.name in _TOOL_TO_PHASE
                     ):
+                        phase = _TOOL_TO_PHASE[part.function_response.name]
+                        if phase in _WA_NOTIFY_PHASES and _twilio_client:
+                            msg = _WA_MILESTONE_MESSAGES.get(phase)
+                            if msg:
+                                await _wa_send(from_number, msg)
+
                         resp = part.function_response.response
-                        if isinstance(resp, dict):
-                            for v in resp.values():
-                                if isinstance(v, str) and "youtube" in v:
-                                    entry["production_result"] = {"youtube_url": v}
+                        if part.function_response.name == "upload_to_youtube":
+                            if isinstance(resp, dict):
+                                for v in resp.values():
+                                    if isinstance(v, str) and "youtube" in v:
+                                        entry["production_result"] = {"youtube_url": v}
 
             if production_launched:
                 if not entry.get("production_result"):
@@ -860,12 +967,24 @@ async def whatsapp_webhook(request: Request):
                         }
                 entry["status"] = "done"
 
+                result = entry.get("production_result") or {}
+                yt_url = result.get("youtube_url")
+                if _twilio_client:
+                    if yt_url:
+                        await _wa_send(from_number, f"Your video is live!\n{yt_url}")
+                    else:
+                        await _wa_send(from_number, "Production complete! Check your YouTube channel.")
+
+            elif timed_out and reply_parts and _twilio_client:
+                await _wa_send(from_number, "\n".join(reply_parts))
+
         except Exception as e:
             logger.error(f"WhatsApp processing failed: {e}\n{traceback.format_exc()}")
             entry["status"] = "idle"
+            if _twilio_client:
+                await _wa_send(from_number, "Something went wrong on my end. Send me a message to try again.")
         finally:
-            if timed_out and reply_parts and not production_launched:
-                entry["pending_reply"] = "\n".join(reply_parts)
+            entry["processing"] = False
             if not reply_ready.is_set():
                 reply_ready.set()
 
@@ -875,6 +994,8 @@ async def whatsapp_webhook(request: Request):
         await asyncio.wait_for(reply_ready.wait(), timeout=14)
     except asyncio.TimeoutError:
         timed_out = True
+        if _twilio_client:
+            return _twiml("On it — I'll send you what I find in a moment.")
         return _twiml(
             "Still pulling that together — send another message "
             "in a few seconds and I'll have your answer!"
@@ -882,7 +1003,7 @@ async def whatsapp_webhook(request: Request):
 
     reply = "\n".join(reply_parts) or "Hmm, let me think about that."
 
-    if production_launched:
+    if production_launched and not _twilio_client:
         reply = (
             reply.rstrip()
             + "\n\nStarting production now! I'll have your video ready "

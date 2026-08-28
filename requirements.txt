@@ -11,3 +11,4 @@ google-auth-httplib2
 pytrends
 requests
 google-cloud-storage
+twilio
