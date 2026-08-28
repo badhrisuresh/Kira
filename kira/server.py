@@ -824,6 +824,10 @@ async def whatsapp_webhook(Body: str = Form(""), From: str = Form("")):
     logger.info(f"WhatsApp message from {From}: {Body}")
     reply_text = await _send_message(Body)
 
+    reply_text = re.sub(r'[*#_`~]', '', reply_text)
+    if len(reply_text) > 1550:
+        reply_text = reply_text[:1550].rsplit(" ", 1)[0] + "..."
+
     twiml = MessagingResponse()
     twiml.message(reply_text)
     return Response(content=str(twiml), media_type="application/xml")
