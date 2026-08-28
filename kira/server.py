@@ -62,6 +62,23 @@ _state = {
     "error": None,
 }
 
+# ── Tool-to-phase mapping (shared by /api/approve and /api/chat) ─
+
+_TOOL_TO_PHASE = {
+    "script_writer": "script",
+    "production_planner": "plan",
+    "generate_image": "image_gen",
+    "generate_video": "video_gen",
+    "concat_videos": "concat",
+    "generate_voiceover": "voiceover",
+    "generate_background_music": "music",
+    "fit_and_mux_audio": "mux",
+    "mux_music_only": "mux",
+    "upload_to_youtube": "upload",
+    "write_memory": "memory",
+}
+_PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
+
 # ── Helpers ───────────────────────────────────────────────────────
 
 
@@ -464,6 +481,189 @@ async def skip():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/chat")
+async def chat(request: Request):
+    """Conversational endpoint for WhatsApp / Twilio.
+    Sends the user's message to Kira and returns the reply.
+    If the conversation leads to a confirmed topic, production
+    starts in the background and the hand-off reply is returned
+    immediately."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON."}, status_code=400)
+
+    message = body.get("message", "").strip()
+    if not message:
+        return JSONResponse({"error": "No message provided."}, status_code=400)
+
+    if _state["status"] == "producing":
+        return {"reply": "Still working on the current video — I'll message you when it's live!"}
+
+    _state["error"] = None
+
+    session = await _get_or_create_session()
+    content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=message)],
+    )
+
+    reply_parts: list[str] = []
+    all_text: list[str] = []
+    reply_ready = asyncio.Event()
+    production_launched = False
+
+    async def _process():
+        nonlocal production_launched
+
+        phases = _get_phases()
+        phase_order = [p[0] for p in phases]
+        phase_labels = {p[0]: p[1] for p in phases}
+        current_phase_idx = 0
+
+        try:
+            async for event in runner.run_async(
+                user_id=_state["user_id"],
+                session_id=session.id,
+                new_message=content,
+            ):
+                if not event.content or not event.content.parts:
+                    continue
+
+                for part in event.content.parts:
+                    if part.text:
+                        all_text.append(part.text)
+                        if not production_launched:
+                            reply_parts.append(part.text)
+
+                    if hasattr(part, "function_call") and part.function_call:
+                        tool_name = part.function_call.name
+
+                        if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                            production_launched = True
+                            _state["status"] = "producing"
+                            _state["production_result"] = None
+                            await event_bus.clear()
+                            for pid, pname in phases:
+                                await event_bus.emit(ProductionEvent(
+                                    phase=pid, status="pending", detail=pname,
+                                ))
+                            reply_ready.set()
+
+                        if production_launched and tool_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[tool_name]
+                            if phase in phase_order:
+                                phase_idx = phase_order.index(phase)
+                                for i in range(current_phase_idx, phase_idx):
+                                    if phase_order[i] in phase_labels:
+                                        await event_bus.emit(ProductionEvent(
+                                            phase=phase_order[i],
+                                            status="completed",
+                                            detail=f"{phase_labels[phase_order[i]]} — done",
+                                            progress=1.0,
+                                        ))
+                                await event_bus.emit(ProductionEvent(
+                                    phase=phase,
+                                    status="in_progress",
+                                    detail=f"{phase_labels[phase]} ...",
+                                    progress=0.5,
+                                ))
+                                current_phase_idx = phase_idx
+
+                    if (
+                        production_launched
+                        and hasattr(part, "function_response")
+                        and part.function_response
+                    ):
+                        resp_name = part.function_response.name
+                        if resp_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[resp_name]
+                            if phase in phase_order:
+                                result_data = part.function_response.response
+                                preview = None
+                                if isinstance(result_data, dict):
+                                    for v in result_data.values():
+                                        if isinstance(v, str) and (
+                                            v.startswith("http")
+                                            and any(
+                                                ext in v.lower()
+                                                for ext in [".png", ".jpg", ".mp4", ".webm"]
+                                            )
+                                        ):
+                                            preview = v
+                                elif isinstance(result_data, str) and result_data.startswith("http"):
+                                    preview = result_data
+
+                                await event_bus.emit(ProductionEvent(
+                                    phase=phase,
+                                    status="completed",
+                                    detail=f"{phase_labels[phase]} — done",
+                                    progress=1.0,
+                                    preview_url=preview,
+                                ))
+                                current_phase_idx = phase_order.index(phase) + 1
+
+            if production_launched:
+                for i in range(current_phase_idx, len(phase_order)):
+                    await event_bus.emit(ProductionEvent(
+                        phase=phase_order[i],
+                        status="completed",
+                        detail=f"{phase_labels[phase_order[i]]} — done",
+                        progress=1.0,
+                    ))
+
+                full_response = "\n".join(all_text)
+                video_id = None
+                yt_match = re.search(
+                    r"(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})",
+                    full_response,
+                )
+                if yt_match:
+                    video_id = yt_match.group(1)
+
+                _state["production_result"] = {
+                    "response": full_response,
+                    "video_id": video_id,
+                    "youtube_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                }
+                _state["status"] = "done"
+                await event_bus.emit(ProductionEvent(
+                    phase="done",
+                    status="completed",
+                    detail="Production complete!",
+                    progress=1.0,
+                    preview_url=f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                ))
+
+        except Exception as e:
+            logger.error(f"Chat/production failed: {e}\n{traceback.format_exc()}")
+            if production_launched:
+                _state["status"] = "error"
+                _state["error"] = str(e)
+                await event_bus.emit(ProductionEvent(
+                    phase="error",
+                    status="error",
+                    detail="Production failed",
+                    error_message=str(e),
+                ))
+        finally:
+            if not reply_ready.is_set():
+                reply_ready.set()
+
+    asyncio.create_task(_process())
+
+    try:
+        await asyncio.wait_for(reply_ready.wait(), timeout=120)
+    except asyncio.TimeoutError:
+        return {"reply": "Hmm, taking longer than expected. Try again in a bit."}
+
+    reply = "\n".join(reply_parts)
+    if not reply:
+        reply = "Something went wrong on my end. Try again?"
+
+    return {"reply": reply, "producing": production_launched}
+
+
 @app.post("/api/approve")
 async def approve(request: Request):
     """Approve a chosen topic and start async production."""
@@ -523,21 +723,6 @@ async def _run_production():
         phase_labels = {p[0]: p[1] for p in phases}
         current_phase_idx = 0
 
-        # Map tool names to phases
-        tool_to_phase = {
-            "script_writer": "script",
-            "production_planner": "plan",
-            "generate_image": "image_gen",
-            "generate_video": "video_gen",
-            "concat_videos": "concat",
-            "generate_voiceover": "voiceover",
-            "generate_background_music": "music",
-            "fit_and_mux_audio": "mux",
-            "mux_music_only": "mux",
-            "upload_to_youtube": "upload",
-            "write_memory": "memory",
-        }
-
         response_parts = []
         async for event in runner.run_async(
             user_id=_state["user_id"],
@@ -551,8 +736,8 @@ async def _run_production():
 
                     if hasattr(part, 'function_call') and part.function_call:
                         tool_name = part.function_call.name
-                        if tool_name in tool_to_phase:
-                            phase = tool_to_phase[tool_name]
+                        if tool_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[tool_name]
                             if phase in phase_order:
                                 phase_idx = phase_order.index(phase)
                                 for i in range(current_phase_idx, phase_idx):
@@ -573,8 +758,8 @@ async def _run_production():
 
                     if hasattr(part, 'function_response') and part.function_response:
                         resp_name = part.function_response.name
-                        if resp_name in tool_to_phase:
-                            phase = tool_to_phase[resp_name]
+                        if resp_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[resp_name]
                             if phase in phase_order:
                                 result_data = part.function_response.response
                                 preview = None
