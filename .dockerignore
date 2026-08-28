@@ -1,0 +1,23 @@
+venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets — must never be baked into the image
+kira/.env
+token.pickle
+client_secret.json
+
+# Dev / local-only files
+kira/.adk/
+test_upload.py
+plan.md
+*.docx
+*.md
+!requirements.txt
+
+# OS junk
+.DS_Store
+Thumbs.db

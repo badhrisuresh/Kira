@@ -1,0 +1,61 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  SERVICE: kira
+  REPOSITORY: kira
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
+          docker build -t $IMAGE .
+          docker push $IMAGE
+
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image $IMAGE \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --memory 1Gi \
+            --timeout 300 \
+            --concurrency 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --allow-unauthenticated \
+            --set-secrets "\
+              GOOGLE_API_KEY=GOOGLE_API_KEY:latest,\
+              FAL_KEY=FAL_KEY:latest,\
+              GCS_BUCKET_NAME=GCS_BUCKET_NAME:latest,\
+              YOUTUBE_TOKEN_JSON=YOUTUBE_TOKEN_JSON:latest,\
+              TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,\
+              TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,\
+              TWILIO_WHATSAPP_NUMBER=TWILIO_WHATSAPP_NUMBER:latest"
