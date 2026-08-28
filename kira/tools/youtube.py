@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import pickle
+import tempfile
 import urllib.request
 
 from google.auth.transport.requests import Request
@@ -42,7 +43,7 @@ def upload_to_youtube(video_url: str, title: str, description: str) -> str:
     if os.path.isfile(video_url):
         local_path = video_url
     else:
-        local_path = "/tmp/kira_upload.mp4"
+        local_path = os.path.join(tempfile.gettempdir(), "kira_upload.mp4")
         urllib.request.urlretrieve(video_url, local_path)
 
     creds = _load_credentials()
