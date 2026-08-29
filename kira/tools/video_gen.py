@@ -1,7 +1,13 @@
 import logging
+import os
+import tempfile
 import time
+import uuid
 
 import fal_client
+import requests
+
+from .. import media as media_mod
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +52,28 @@ def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str
         )
         url = result["video"]["url"]
         log.info("[VIDEO_GEN] Success | url=%s | elapsed=%.1fs", url[:80], time.time() - t0)
+
+        # Persist to GCS so the URL survives after Fal.ai expires it
+        if media_mod.is_enabled():
+            try:
+                gcs_url = _persist_to_gcs(url)
+                log.info("[VIDEO_GEN] Persisted to GCS | gcs_url=%s", gcs_url)
+            except Exception as e:
+                log.warning("[VIDEO_GEN] GCS persist failed (using fal URL): %s", e)
+
         return url
     except Exception as e:
         log.error("[VIDEO_GEN] Failed | error=%s | elapsed=%.1fs", e, time.time() - t0)
         raise
+
+
+def _persist_to_gcs(fal_url: str) -> str:
+    """Download from Fal.ai and re-upload to GCS."""
+    tmp = os.path.join(tempfile.gettempdir(), f"kira_clip_{uuid.uuid4().hex[:6]}.mp4")
+    resp = requests.get(fal_url, timeout=120)
+    resp.raise_for_status()
+    with open(tmp, "wb") as f:
+        f.write(resp.content)
+    gcs_url = media_mod.upload_video(tmp)
+    os.remove(tmp)
+    return gcs_url

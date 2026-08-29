@@ -12,9 +12,17 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from .. import media as media_mod
+
 log = logging.getLogger(__name__)
 
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "token.pickle")
+
+
+def _has_youtube_creds() -> bool:
+    if os.environ.get("YOUTUBE_TOKEN_JSON"):
+        return True
+    return os.path.isfile(TOKEN_FILE)
 
 
 def _load_credentials():
@@ -33,28 +41,8 @@ def _load_credentials():
         return pickle.load(f)
 
 
-def upload_to_youtube(video_url: str, title: str, description: str) -> str:
-    """Download a video from URL and upload it to YouTube as a private
-    Short. Title should include #Shorts for YouTube classification.
-
-    Args:
-        video_url: URL of the video file (from generate_video).
-        title: YouTube video title, under 60 characters, include #Shorts.
-        description: YouTube description with source citation.
-
-    Returns: YouTube video ID string."""
-    log.info("[YOUTUBE] Starting upload | title=%s | source=%s", title, video_url[:80])
-    t0 = _time.time()
-
-    # Accept both URLs and local file paths (from concat_videos).
-    if os.path.isfile(video_url):
-        local_path = video_url
-    else:
-        local_path = os.path.join(tempfile.gettempdir(), "kira_upload.mp4")
-        log.info("[YOUTUBE] Downloading video from URL...")
-        urllib.request.urlretrieve(video_url, local_path)
-        log.info("[YOUTUBE] Download complete | elapsed=%.1fs", _time.time() - t0)
-
+def _upload_to_youtube_inner(local_path: str, title: str, description: str) -> str:
+    """Upload a local video file to YouTube. Returns video ID."""
     creds = _load_credentials()
     if creds.expired and creds.refresh_token:
         log.info("[YOUTUBE] Refreshing OAuth credentials...")
@@ -80,7 +68,64 @@ def upload_to_youtube(video_url: str, title: str, description: str) -> str:
         media_body=MediaFileUpload(local_path, resumable=True),
     )
     response = request.execute()
-    video_id = response["id"]
-    log.info("[YOUTUBE] Upload success | video_id=%s | url=https://youtube.com/shorts/%s | elapsed=%.1fs",
-             video_id, video_id, _time.time() - t0)
-    return video_id
+    return response["id"]
+
+
+def publish_video(video_url: str, title: str, description: str) -> dict:
+    """Upload the final video to cloud storage and optionally to YouTube.
+
+    The video is always uploaded to Google Cloud Storage for a shareable
+    public link. If YouTube credentials are configured, it is also
+    uploaded to YouTube as a private Short.
+
+    Args:
+        video_url: URL or local path of the final video (from mux step).
+        title: Video title, under 60 characters, include #Shorts.
+        description: Video description with source citation.
+
+    Returns: dict with keys:
+        - gcs_url: Public GCS link (always present when GCS configured)
+        - youtube_url: YouTube Shorts link (present when YT configured)
+        - video_id: YouTube video ID (present when YT configured)
+    """
+    log.info("[PUBLISH] Starting | title=%s | source=%s", title, video_url[:80])
+    t0 = _time.time()
+
+    if os.path.isfile(video_url):
+        local_path = video_url
+    else:
+        local_path = os.path.join(tempfile.gettempdir(), "kira_upload.mp4")
+        log.info("[PUBLISH] Downloading video from URL...")
+        urllib.request.urlretrieve(video_url, local_path)
+        log.info("[PUBLISH] Download complete | elapsed=%.1fs", _time.time() - t0)
+
+    result = {}
+
+    if media_mod.is_enabled():
+        gcs_url = media_mod.upload_video(local_path)
+        if gcs_url:
+            result["gcs_url"] = gcs_url
+            log.info("[PUBLISH] GCS upload done | url=%s", gcs_url)
+
+    if _has_youtube_creds():
+        try:
+            video_id = _upload_to_youtube_inner(local_path, title, description)
+            result["video_id"] = video_id
+            result["youtube_url"] = f"https://youtube.com/shorts/{video_id}"
+            log.info("[PUBLISH] YouTube upload done | video_id=%s | elapsed=%.1fs",
+                     video_id, _time.time() - t0)
+        except Exception as e:
+            log.error("[PUBLISH] YouTube upload failed (GCS still available): %s", e)
+            if "gcs_url" not in result:
+                raise
+    elif not result.get("gcs_url"):
+        raise RuntimeError(
+            "Neither GCS nor YouTube credentials configured — cannot publish video"
+        )
+
+    log.info("[PUBLISH] Complete | result=%s | elapsed=%.1fs", result, _time.time() - t0)
+    return result
+
+
+# Keep backward-compat alias for any direct imports
+upload_to_youtube = publish_video
