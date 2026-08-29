@@ -1,7 +1,13 @@
 import logging
+import os
+import tempfile
 import time
+import uuid
 
 import fal_client
+import requests
+
+from .. import media as media_mod
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +40,28 @@ def generate_image(prompt: str) -> str:
 
         url = images[0]["url"]
         log.info("[IMAGE_GEN] Success | url=%s | elapsed=%.1fs", url[:80], time.time() - t0)
+
+        # Persist to GCS so the URL survives after Fal.ai expires it
+        if media_mod.is_enabled():
+            try:
+                gcs_url = _persist_to_gcs(url)
+                log.info("[IMAGE_GEN] Persisted to GCS | gcs_url=%s", gcs_url)
+            except Exception as e:
+                log.warning("[IMAGE_GEN] GCS persist failed (using fal URL): %s", e)
+
         return url
     except Exception as e:
         log.error("[IMAGE_GEN] Failed | error=%s | elapsed=%.1fs", e, time.time() - t0)
         raise
+
+
+def _persist_to_gcs(fal_url: str) -> str:
+    """Download from Fal.ai and re-upload to GCS."""
+    tmp = os.path.join(tempfile.gettempdir(), f"kira_img_{uuid.uuid4().hex[:6]}.png")
+    resp = requests.get(fal_url, timeout=60)
+    resp.raise_for_status()
+    with open(tmp, "wb") as f:
+        f.write(resp.content)
+    gcs_url = media_mod.upload_image(tmp)
+    os.remove(tmp)
+    return gcs_url

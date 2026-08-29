@@ -77,25 +77,28 @@ URL / downloaded path directly.
    duration, burns in synced captions, and mixes the audio (VO
    dominant, music quiet). Use the returned path as the final video.
 
-## PHASE 6 — UPLOAD
+## PHASE 6 — PUBLISH
 
-Call upload_to_youtube() with:
+Call publish_video() with:
 - video_url: the file path from Phase 5 (muxed video)
 - title: from the script (must include #Shorts)
 - description: from the script (include source citation and hashtags)
+
+It returns a dict with gcs_url (public shareable link) and optionally
+youtube_url / video_id if YouTube is configured.
 
 ## PHASE 7 — MEMORY
 
 Call write_memory() with:
 - topic: the topic from the brief
-- video_id: the YouTube video ID from Phase 6
+- video_id: the YouTube video ID from Phase 6 (if available, empty string otherwise)
 - clear_next: True (if a one-time instruction was consumed)
 
 ## PHASE 8 — REPORT
 
 Tell the user:
 - Topic and why it was chosen
-- YouTube video ID (format as https://youtube.com/shorts/VIDEO_ID)
+- The video link: use youtube_url if available, otherwise use gcs_url
 - Number of shots and total duration
 - One-line description of the video
 

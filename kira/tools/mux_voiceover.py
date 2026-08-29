@@ -52,7 +52,7 @@ def fit_and_mux_audio(
             transcription mishears a word. Optional but recommended —
             pass the same VOICEOVER PROMPT text used to generate the VO.
 
-    Returns: Local path to the final mp4. Pass to upload_to_youtube()."""
+    Returns: Local path to the final mp4. Pass to publish_video()."""
     log.info("[MUX] Starting audio mux | video=%s | vo=%s | music=%s | script_len=%d",
              video_path, voiceover_url[:60], music_url[:60], len(script))
     t0 = _time.time()

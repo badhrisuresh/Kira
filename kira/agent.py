@@ -19,7 +19,7 @@ from .tools import tts
 from .tools.background_music import generate_background_music
 from .tools import background_music
 from .tools.mux_voiceover import fit_and_mux_audio, mux_music_only
-from .tools.youtube import upload_to_youtube
+from .tools.youtube import publish_video
 
 MODEL = "gemini-3.5-flash"
 
@@ -157,7 +157,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         generate_video,
         concat_videos,
         generate_background_music,
-        upload_to_youtube,
+        publish_video,
         write_memory,
     ]
     if narration_enabled:
@@ -177,7 +177,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
             "shots, generates reference images, generates multi-shot video, "
             "concatenates clips, "
             + ("generates TTS voiceover and " if narration_enabled else "")
-            + "background music, muxes audio, uploads to YouTube, and saves "
+            + "background music, muxes audio, publishes the video, and saves "
             "the result to memory. "
             "Transfer to this agent ONLY after the user has confirmed "
             "the topic and creative brief."

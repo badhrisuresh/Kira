@@ -84,8 +84,10 @@ from google import genai
 
 from .agent import build_agents
 from . import block_manager
+from . import db
 from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
+from .tools import memory as memory_mod
 
 logger = logging.getLogger(__name__)
 
@@ -219,14 +221,14 @@ _TOOL_TO_PHASE = {
     "generate_background_music": "music",
     "fit_and_mux_audio": "mux",
     "mux_music_only": "mux",
-    "upload_to_youtube": "upload",
+    "publish_video": "upload",
     "write_memory": "memory",
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
 
 # ── WhatsApp per-user sessions ───────────────────────────────────
 
-SESSION_GAP_SECONDS = 4 * 3600  # 4 hours of silence → new session
+SESSION_GAP_SECONDS = 2 * 3600  # 2 hours of silence → new session
 
 _wa_sessions: dict[str, dict] = {}
 
@@ -247,6 +249,7 @@ async def _get_wa_session(phone: str):
         if session:
             logger.info("[SESSION] Reusing session | phone=%s | session=%s | idle=%.0fs",
                        phone, session.id, idle_secs)
+            await db.touch_session(session.id)
             return session, entry
 
     user_id = f"wa_{phone.replace('whatsapp:', '').replace('+', '')}"
@@ -255,6 +258,10 @@ async def _get_wa_session(phone: str):
     )
     logger.info("[SESSION] New session | phone=%s | session=%s | user_id=%s",
                phone, session.id, user_id)
+
+    await db.upsert_user(phone, user_id)
+    await db.create_session(session.id, phone)
+
     entry = {
         "session_id": session.id,
         "user_id": user_id,
@@ -267,6 +274,21 @@ async def _get_wa_session(phone: str):
     }
     _wa_sessions[phone] = entry
     return session, entry
+
+
+async def _load_user_memory(phone: str):
+    """Load a user's memory from DB into the memory module cache."""
+    if db.is_enabled():
+        mem = await db.get_user_memory(phone)
+        memory_mod.configure_user(phone, mem)
+
+
+async def _flush_user_memory():
+    """Flush the memory module cache back to DB."""
+    if db.is_enabled():
+        phone, mem = memory_mod.get_current_memory()
+        if phone and mem:
+            await db.update_user_memory(phone, mem)
 
 
 def _format_for_whatsapp(text: str) -> str:
@@ -531,7 +553,9 @@ def _parse_proposal(raw_text: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Kira server starting")
+    await db.init()
     yield
+    await db.close()
     logger.info("Kira server shutting down")
 
 
@@ -852,17 +876,27 @@ async def chat(request: Request):
 
                 full_response = "\n".join(all_text)
                 video_id = None
+                gcs_url = None
                 yt_match = re.search(
                     r"(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})",
                     full_response,
                 )
                 if yt_match:
                     video_id = yt_match.group(1)
+                gcs_match = re.search(
+                    r'(https://storage\.googleapis\.com/\S+\.mp4)', full_response,
+                )
+                if gcs_match:
+                    gcs_url = gcs_match.group(1)
+
+                preview = (f"https://youtube.com/shorts/{video_id}" if video_id
+                           else gcs_url)
 
                 _state["production_result"] = {
                     "response": full_response,
                     "video_id": video_id,
                     "youtube_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                    "gcs_url": gcs_url,
                 }
                 _state["status"] = "done"
                 await event_bus.emit(ProductionEvent(
@@ -870,7 +904,7 @@ async def chat(request: Request):
                     status="completed",
                     detail="Production complete!",
                     progress=1.0,
-                    preview_url=f"https://youtube.com/shorts/{video_id}" if video_id else None,
+                    preview_url=preview,
                 ))
 
         except Exception as e:
@@ -910,6 +944,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     entry["processing"] = True
     logger.info("[WA_BG] Starting background processing | session=%s | text=%s",
                session.id, text[:80])
+    await _load_user_memory(from_number)
     t0 = time.time()
     try:
         content = genai_types.Content(
@@ -945,6 +980,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
         logger.error("[WA_BG] Failed | error=%s | elapsed=%.1fs\n%s",
                     e, time.time() - t0, traceback.format_exc())
     finally:
+        await _flush_user_memory()
         entry["processing"] = False
 
 
@@ -966,6 +1002,8 @@ async def whatsapp_webhook(request: Request):
     logger.info(f"WhatsApp from {from_number}: {body[:80]}")
 
     session, entry = await _get_wa_session(from_number)
+
+    await db.save_message(entry["session_id"], from_number, "user", body)
 
     # ── Brand-new session → instant greeting, process in background ──
     if entry.get("is_new"):
@@ -1002,8 +1040,8 @@ async def whatsapp_webhook(request: Request):
         result = entry["production_result"]
         entry["status"] = "idle"
         entry["production_result"] = None
-        url = result.get("youtube_url", "")
-        reply = f"Your video is live!\n{url}" if url else "Video production is complete!"
+        url = result.get("youtube_url") or result.get("gcs_url", "")
+        reply = f"Your video is ready!\n{url}" if url else "Video production is complete!"
         return _twiml(reply)
 
     # ── If production is still running ───────────────────────
@@ -1015,6 +1053,7 @@ async def whatsapp_webhook(request: Request):
     # ── Normal conversational flow ───────────────────────────
     logger.info("[WA] Normal flow | phone=%s | session=%s | body=%s",
                from_number, session.id, body[:80])
+    await _load_user_memory(from_number)
     content = genai_types.Content(
         role="user",
         parts=[genai_types.Part(text=body)],
@@ -1037,7 +1076,7 @@ async def whatsapp_webhook(request: Request):
         "generate_background_music": "Visuals ready! Composing music now...",
         "fit_and_mux_audio": "Mixing audio and adding captions...",
         "mux_music_only": "Adding music to the video...",
-        "upload_to_youtube": "Almost done! Uploading to YouTube...",
+        "publish_video": "Almost done! Publishing your video...",
     }
 
     async def _process():
@@ -1089,40 +1128,42 @@ async def whatsapp_webhook(request: Request):
 
                         if (
                             production_launched
-                            and resp_name == "upload_to_youtube"
+                            and resp_name == "publish_video"
                         ):
                             resp = part.function_response.response
                             if isinstance(resp, dict):
-                                for v in resp.values():
-                                    if isinstance(v, str) and "youtube" in v:
-                                        entry["production_result"] = {"youtube_url": v}
-                            elif isinstance(resp, str) and len(resp) == 11:
                                 entry["production_result"] = {
-                                    "youtube_url": f"https://youtube.com/shorts/{resp}"
+                                    "youtube_url": resp.get("youtube_url", ""),
+                                    "gcs_url": resp.get("gcs_url", ""),
+                                    "video_id": resp.get("video_id", ""),
                                 }
 
             if production_launched:
                 if not entry.get("production_result"):
                     full = "\n".join(all_text)
                     yt = re.search(r'youtube\.com/shorts/([A-Za-z0-9_-]{11})', full)
-                    if yt:
+                    gcs = re.search(r'(https://storage\.googleapis\.com/\S+\.mp4)', full)
+                    if yt or gcs:
                         entry["production_result"] = {
-                            "youtube_url": f"https://youtube.com/shorts/{yt.group(1)}"
+                            "youtube_url": f"https://youtube.com/shorts/{yt.group(1)}" if yt else "",
+                            "gcs_url": gcs.group(1) if gcs else "",
                         }
                 entry["status"] = "done"
                 logger.info("[WA] Production complete | elapsed=%.1fs | result=%s",
                            time.time() - t0, entry.get("production_result"))
                 if entry.get("production_result") and from_number:
-                    url = entry["production_result"].get("youtube_url", "")
-                    msg = f"Your video is live!\n{url}" if url else "Video production is complete!"
+                    result = entry["production_result"]
+                    url = result.get("youtube_url") or result.get("gcs_url", "")
+                    msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
+                    await db.save_message(entry["session_id"], from_number, "assistant", msg)
                     entry["production_result"] = None
                 elif not entry.get("production_result"):
-                    logger.error("[WA] Production finished but no video ID found!")
+                    logger.error("[WA] Production finished but no video link found!")
                     if from_number:
                         _push_whatsapp(from_number,
                                       "Production finished but something went wrong — "
-                                      "I couldn't find the YouTube link. Check the logs.")
+                                      "I couldn't find the video link. Check the logs.")
 
         except Exception as e:
             logger.error("[WA] Processing failed | error=%s | elapsed=%.1fs\n%s",
@@ -1140,6 +1181,7 @@ async def whatsapp_webhook(request: Request):
                     _push_whatsapp(from_number, summary)
                 else:
                     entry["pending_reply"] = reply
+            await _flush_user_memory()
             if not reply_ready.is_set():
                 reply_ready.set()
 
@@ -1316,25 +1358,33 @@ async def _run_production():
         full_response = "\n".join(response_parts)
 
         video_id = None
+        gcs_url = None
         yt_match = re.search(r'(?:youtube\.com/shorts/|video[_ ]?(?:id|ID)[:\s]*)\s*([A-Za-z0-9_-]{11})', full_response)
         if yt_match:
             video_id = yt_match.group(1)
+        gcs_match = re.search(r'(https://storage\.googleapis\.com/\S+\.mp4)', full_response)
+        if gcs_match:
+            gcs_url = gcs_match.group(1)
+
+        preview = (f"https://youtube.com/shorts/{video_id}" if video_id
+                   else gcs_url)
 
         _state["production_result"] = {
             "response": full_response,
             "video_id": video_id,
             "youtube_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
+            "gcs_url": gcs_url,
         }
         _state["status"] = "done"
-        logger.info("[PRODUCTION] Complete | video_id=%s | elapsed=%.1fs",
-                   video_id, time.time() - t0)
+        logger.info("[PRODUCTION] Complete | video_id=%s | gcs_url=%s | elapsed=%.1fs",
+                   video_id, gcs_url, time.time() - t0)
 
         await event_bus.emit(ProductionEvent(
             phase="done",
             status="completed",
             detail="Production complete!",
             progress=1.0,
-            preview_url=f"https://youtube.com/shorts/{video_id}" if video_id else None,
+            preview_url=preview,
         ))
 
     except Exception as e:
@@ -1387,6 +1437,33 @@ async def get_history():
     return {
         "topics": list(reversed(memory.get("topics", []))),
         "total": len(memory.get("topics", [])),
+    }
+
+
+@app.get("/api/productions")
+async def list_productions(phone: str = ""):
+    """List video productions, optionally filtered by phone number."""
+    if phone:
+        rows = await db.get_user_productions(phone)
+    elif db.is_enabled():
+        async with db._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM productions ORDER BY created_at DESC LIMIT 50"
+            )
+    else:
+        return {"productions": []}
+    return {
+        "productions": [
+            {
+                "id": r["id"],
+                "topic": r["topic"],
+                "gcs_url": r["gcs_url"],
+                "youtube_url": r["youtube_url"],
+                "status": r["status"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
     }
 
 
@@ -1566,7 +1643,7 @@ async def wa_sim_poll():
 
 @app.post("/api/wa-sim/reset")
 async def wa_sim_reset():
-    """Reset the simulator session (like a 4-hour idle timeout)."""
+    """Reset the simulator session (like a 2-hour idle timeout)."""
     _wa_sessions.pop(_WA_SIM_NUMBER, None)
     _wa_sim_queues.pop(_WA_SIM_NUMBER, None)
     return {"status": "ok"}
