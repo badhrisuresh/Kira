@@ -1,9 +1,9 @@
 """Content Block management — CRUD operations and meta-LLM generation.
 
 A Content Block is a self-contained directory holding all theme-specific
-prompts and config for a particular video niche (e.g. "Space & Cosmos",
-"Rural South India — Ghibli").  The production pipeline is content-agnostic;
-blocks supply the *what* while the pipeline handles the *how*.
+prompts and config for a particular video niche (e.g. "Space & Cosmos").
+The production pipeline is content-agnostic; blocks supply the *what*
+while the pipeline handles the *how*.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ ACTIVE_FILE = os.path.join(BLOCKS_DIR, ".active")
 
 PROMPT_FILES = [
     "research_agent.md",
-    "web_trends_agent.md",
     "script_writer.md",
     "production_breakdown.md",
 ]
@@ -193,7 +192,7 @@ def _build_meta_prompt(form_data: dict, examples: dict[str, str]) -> str:
 creation pipeline for a specific niche. Your job is to generate the system
 prompts (.md files) that will drive an AI agent pipeline.
 
-Below are FOUR example .md files from an existing "Space & Cosmos" block.
+Below are THREE example .md files from an existing "Space & Cosmos" block.
 These demonstrate the EXACT structural format, level of detail, and quality
 bar expected. You must produce equivalent files for a COMPLETELY DIFFERENT
 content niche, adapting ALL content-specific references while keeping the
@@ -204,12 +203,6 @@ EXAMPLE: research_agent.md (Space & Cosmos)
 ═══════════════════════════════════════════════════════════
 
 {examples.get("research_agent.md", "(not available)")}
-
-═══════════════════════════════════════════════════════════
-EXAMPLE: web_trends_agent.md (Space & Cosmos)
-═══════════════════════════════════════════════════════════
-
-{examples.get("web_trends_agent.md", "(not available)")}
 
 ═══════════════════════════════════════════════════════════
 EXAMPLE: script_writer.md (Space & Cosmos)
@@ -227,7 +220,7 @@ EXAMPLE: production_breakdown.md (Space & Cosmos)
 YOUR TASK
 ═══════════════════════════════════════════════════════════
 
-Generate the four .md files for this NEW content block:
+Generate the three .md files for this NEW content block:
 
   Block Name: {name}
   Description: {description}
@@ -254,18 +247,15 @@ RULES
    - Keep the 4-step flow (RESEARCH → PROPOSE → CONVERSE → HAND OFF) intact.
    - Adjust proposal criteria to match the new domain (e.g. replace "citable
      astronomical fact" with whatever the domain's equivalent anchor is).
-   - If YouTube trends are disabled, tell the agent to rely primarily on
-     web_trends_search() for current events and its own knowledge for
-     evergreen topic ideas.
+   - The agent has 3 research tools: search_youtube_trends() (no args),
+     search_google_trends(keywords=[...]) (1-4 keywords), and
+     web_search(query="...") (natural language query). Plus read_memory()
+     and write_memory(). Keep the research pipeline using these tools.
+   - If YouTube trends are disabled, tell the agent to skip
+     search_youtube_trends() and use web_search() for current events.
    - Replace the duration reference with {duration_min}-{duration_max} seconds.
 
-3. **web_trends_agent.md**:
-   - Replace space-specific search guidance with domain-appropriate searches.
-   - List 5-8 categories of things to search for in the new domain.
-   - Keep the output format (bulleted list with description, visual potential,
-     source).
-
-4. **script_writer.md**:
+3. **script_writer.md**:
    - Replace "educational space and cosmos content" with the new niche.
    - Replace ALL hook examples with domain-appropriate ones (at least 2 per
      hook type).
@@ -276,7 +266,7 @@ RULES
    - Update word count targets for the new duration range using ~145 WPM.
    - Keep the OUTPUT FORMAT block identical (TITLE, DESCRIPTION, BEATS, etc.).
 
-5. **production_breakdown.md**:
+4. **production_breakdown.md**:
    - Replace duration patterns to sum to {duration_min}-{duration_max} seconds.
    - Replace "space-specific visual language" section with domain-appropriate
      visual guidance (e.g. for rural India: "golden-hour paddy fields",
@@ -286,7 +276,7 @@ RULES
      quality checklist) intact — these are universal.
    - Update voiceover timing table for the new duration range.
 
-6. Also generate:
+5. Also generate:
    - **voice_style**: A 1-2 sentence voice/delivery description for TTS
      (what kind of voice, tone, pacing, inspiration). Adapt to the niche.
    - **music_style**: A music generation prompt template. Must include
@@ -302,7 +292,6 @@ Return a JSON object with EXACTLY these keys:
 
 {{
   "research_agent_md": "<full markdown content>",
-  "web_trends_agent_md": "<full markdown content>",
   "script_writer_md": "<full markdown content>",
   "production_breakdown_md": "<full markdown content>",
   "voice_style": "<1-2 sentence voice description>",
@@ -347,7 +336,6 @@ async def create_block(form_data: dict) -> dict:
         # Save .md files
         file_map = {
             "research_agent.md": result["research_agent_md"],
-            "web_trends_agent.md": result["web_trends_agent_md"],
             "script_writer.md": result["script_writer_md"],
             "production_breakdown.md": result["production_breakdown_md"],
         }

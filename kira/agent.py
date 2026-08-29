@@ -3,16 +3,13 @@ import logging
 import os
 
 from google.adk.agents import LlmAgent
-from google.adk.tools import google_search
 from google.genai import types
-
-google_search.bypass_multi_tools_limit = True
 
 log = logging.getLogger(__name__)
 
 from .tools.memory import read_memory, write_memory
 from .tools import memory as memory_mod
-from .tools.trends import search_trends
+from .tools.trends import search_youtube_trends, search_google_trends, web_search
 from .tools import trends
 from .tools.image_gen import generate_image
 from .tools.video_gen import generate_video
@@ -113,6 +110,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     trends.configure(
         seed_keywords=block_config.get("seed_keywords", []),
         noise_terms=block_config.get("noise_terms", []),
+        niche_description=block_config.get("description", block_config.get("name", "")),
         enabled=block_config.get("youtube_trends_enabled", True),
     )
     tts.configure(block_config.get("voice_style", ""))
@@ -120,21 +118,6 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     memory_mod.configure(block_path)
 
     narration_enabled = block_config.get("narration_enabled", True)
-
-    # ── Web Trends sub-agent ─────────────────────────────────
-    web_trends_agent = LlmAgent(
-        name="web_trends_search",
-        model=MODEL,
-
-        description=(
-            "Searches the live web for current trending news and events "
-            f"relevant to: {block_config['name']}. Use this when "
-            "search_trends() returns empty or rate-limited results, or "
-            "when YouTube trends are not configured for this block."
-        ),
-        instruction=load_block_prompt("web_trends_agent.md"),
-        tools=[google_search],
-    )
 
     # ── Script Writer sub-agent ──────────────────────────────
     script_writer_agent = LlmAgent(
@@ -205,9 +188,8 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     )
 
     # ── Root agent tools ─────────────────────────────────────
-    root_tools = [read_memory, write_memory]
-    if block_config.get("youtube_trends_enabled", True):
-        root_tools.insert(0, search_trends)
+    root_tools = [search_youtube_trends, search_google_trends, web_search,
+                  read_memory, write_memory]
 
     root_agent = LlmAgent(
         name="kira",
@@ -215,10 +197,10 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         description=f"Kira — autonomous content strategist for: {block_config['name']}.",
         instruction=load_block_prompt("research_agent.md"),
         tools=root_tools,
-        sub_agents=[execution_agent, web_trends_agent],
+        sub_agents=[execution_agent],
     )
 
-    log.info("[AGENTS] Agent tree built | root=%s | sub_agents=[execution_agent, web_trends_search] "
+    log.info("[AGENTS] Agent tree built | root=%s | sub_agents=[execution_agent] "
              "| root_tools=%s | exec_tools=%d",
              root_agent.name, [t.__name__ for t in root_tools], len(exec_tools))
     return root_agent
@@ -245,6 +227,7 @@ def _load_default_agent() -> LlmAgent:
                        "nebula", "dark matter", "space exploration", "moon landing",
                        "solar system"],
         noise_terms=["samsung", "mario", "game", "fortnite", "minecraft"],
+        niche_description="space, cosmos, and the universe",
         enabled=True,
     )
     fallback_config = {
