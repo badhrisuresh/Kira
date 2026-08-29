@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import time
+
+log = logging.getLogger(__name__)
 
 _config = {
     "seed_keywords": [],
@@ -89,16 +92,22 @@ def search_trends() -> str:
     on an unofficial Google Trends endpoint. If this happens, call
     web_trends_search() instead to search the live web for current
     trending news in your content niche."""
+    log.info("[TRENDS] search_trends() called | enabled=%s | seeds=%d",
+             _config["enabled"], len(_config["seed_keywords"]))
     if not _config["enabled"] or not _config["seed_keywords"]:
+        log.info("[TRENDS] Skipped — trends not configured for this block")
         return (
             "YouTube trends are not configured for this content block. "
             "Call web_trends_search() to search the live web for current "
             "trending topics in your niche instead."
         )
     keywords = _pick_keywords()
+    log.info("[TRENDS] Querying pytrends | keywords=%s", keywords)
+    t0 = time.time()
     try:
         rising, top = _fetch_pytrends(keywords)
     except Exception as e:
+        log.warning("[TRENDS] pytrends failed | error=%s | elapsed=%.1fs", e, time.time() - t0)
         return (
             f"YouTube trends unavailable right now ({e}). "
             "Call web_trends_search() to search the web for current "
@@ -118,6 +127,8 @@ def search_trends() -> str:
     rising = dedup(rising)
     top = dedup(top)
 
+    log.info("[TRENDS] Results | rising=%d | top=%d | elapsed=%.1fs",
+             len(rising), len(top), time.time() - t0)
     if not rising and not top:
         return (
             f"No YouTube trend signal found for {', '.join(keywords)} "

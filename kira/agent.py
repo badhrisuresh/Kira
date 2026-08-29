@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 
 from google.adk.agents import LlmAgent
 from google.adk.tools import google_search
 from google.genai import types
+
+log = logging.getLogger(__name__)
 
 from .tools.memory import read_memory, write_memory
 from .tools import memory as memory_mod
@@ -96,6 +99,9 @@ def _build_execution_prompt(block_config: dict) -> str:
 
 def build_agents(block_config: dict, block_path: str) -> LlmAgent:
     """Build the full agent tree from a content block's config and prompts."""
+    log.info("[AGENTS] Building agent tree | block=%s | narration=%s | trends=%s",
+             block_config.get("name"), block_config.get("narration_enabled"),
+             block_config.get("youtube_trends_enabled"))
 
     def load_block_prompt(filename: str) -> str:
         with open(os.path.join(block_path, filename)) as f:
@@ -215,6 +221,9 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         sub_agents=[execution_agent, web_trends_agent],
     )
 
+    log.info("[AGENTS] Agent tree built | root=%s | sub_agents=[execution_agent, web_trends_search] "
+             "| root_tools=%s | exec_tools=%d",
+             root_agent.name, [t.__name__ for t in root_tools], len(exec_tools))
     return root_agent
 
 

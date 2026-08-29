@@ -1,4 +1,9 @@
+import logging
+import time
+
 import fal_client
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_VOICE = "Kore"
 _DEFAULT_STYLE = (
@@ -28,17 +33,26 @@ def generate_voiceover(prompt: str) -> str:
 
     Returns: URL of the generated MP3. Pass to fit_and_mux_audio()
         along with the concatenated video and background music URL."""
-    result = fal_client.subscribe(
-        "fal-ai/gemini-3.1-flash-tts",
-        arguments={
-            "voice": _DEFAULT_VOICE,
-            "prompt": prompt,
-            "temperature": 1,
-            "language_code": "English (US)",
-            "output_format": "mp3",
-            "style_instructions": _active_style,
-        },
-        with_logs=True,
-        on_queue_update=lambda update: None,
-    )
-    return result["audio"]["url"]
+    log.info("[TTS] Starting voiceover generation | words=%d | prompt=%s",
+             len(prompt.split()), prompt[:100])
+    t0 = time.time()
+    try:
+        result = fal_client.subscribe(
+            "fal-ai/gemini-3.1-flash-tts",
+            arguments={
+                "voice": _DEFAULT_VOICE,
+                "prompt": prompt,
+                "temperature": 1,
+                "language_code": "English (US)",
+                "output_format": "mp3",
+                "style_instructions": _active_style,
+            },
+            with_logs=True,
+            on_queue_update=lambda update: None,
+        )
+        url = result["audio"]["url"]
+        log.info("[TTS] Success | url=%s | elapsed=%.1fs", url[:80], time.time() - t0)
+        return url
+    except Exception as e:
+        log.error("[TTS] Failed | error=%s | elapsed=%.1fs", e, time.time() - t0)
+        raise

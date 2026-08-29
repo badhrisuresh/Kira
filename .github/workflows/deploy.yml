@@ -51,6 +51,7 @@ jobs:
             --min-instances 0 \
             --max-instances 1 \
             --allow-unauthenticated \
+            --set-env-vars "ADK_TRACE_TO_CLOUD=true" \
             --set-secrets "\
               GOOGLE_API_KEY=GOOGLE_API_KEY:latest,\
               FAL_KEY=FAL_KEY:latest,\

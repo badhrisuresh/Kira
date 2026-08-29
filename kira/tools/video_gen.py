@@ -1,4 +1,9 @@
+import logging
+import time
+
 import fal_client
+
+log = logging.getLogger(__name__)
 
 
 def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str:
@@ -24,16 +29,24 @@ def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str
     if duration_int < 3 or duration_int > 10:
         duration_int = 8
 
-    result = fal_client.subscribe(
-        "google/gemini-omni-flash/reference-to-video",
-        arguments={
-            "image_urls": image_urls,
-            "prompt": prompt,
-            "duration": duration_int,
-            "aspect_ratio": "9:16",
-        },
-        with_logs=True,
-        on_queue_update=lambda update: None,
-    )
-
-    return result["video"]["url"]
+    log.info("[VIDEO_GEN] Starting video generation | images=%d | duration=%ds | prompt=%s",
+             len(image_urls), duration_int, prompt[:120])
+    t0 = time.time()
+    try:
+        result = fal_client.subscribe(
+            "google/gemini-omni-flash/reference-to-video",
+            arguments={
+                "image_urls": image_urls,
+                "prompt": prompt,
+                "duration": duration_int,
+                "aspect_ratio": "9:16",
+            },
+            with_logs=True,
+            on_queue_update=lambda update: None,
+        )
+        url = result["video"]["url"]
+        log.info("[VIDEO_GEN] Success | url=%s | elapsed=%.1fs", url[:80], time.time() - t0)
+        return url
+    except Exception as e:
+        log.error("[VIDEO_GEN] Failed | error=%s | elapsed=%.1fs", e, time.time() - t0)
+        raise
