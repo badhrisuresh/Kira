@@ -48,13 +48,25 @@ if _twilio_sid and _twilio_token and _twilio_from:
         logging.warning(f"Twilio client init failed: {e}")
 
 
+# ── WhatsApp simulator message queue ─────────────────────────────
+# Holds push messages per phone number so the chat UI can poll them.
+_wa_sim_queues: dict[str, list[str]] = {}
+
+_WA_SIM_NUMBER = "whatsapp:+15550001234"
+
+
 def _push_whatsapp(to: str, text: str):
-    """Send a proactive WhatsApp message via the Twilio REST API."""
-    if not _twilio_client:
-        logging.warning("[WHATSAPP] Cannot push — Twilio client not configured")
-        return
+    """Send a proactive WhatsApp message via the Twilio REST API.
+    Also queues the message for the local WhatsApp simulator."""
     text = _format_for_whatsapp(text)
     chunks = [text[i:i+1600] for i in range(0, len(text), 1600)]
+
+    # Always queue for the simulator so the chat UI can pick it up
+    _wa_sim_queues.setdefault(to, []).extend(chunks)
+
+    if not _twilio_client:
+        logging.warning("[WHATSAPP] No Twilio client — message queued for simulator only")
+        return
     logger.info("[WHATSAPP] Pushing %d chunk(s) to %s | total_len=%d", len(chunks), to, len(text))
     for i, chunk in enumerate(chunks):
         try:
@@ -916,7 +928,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
         if parts:
             reply = "\n".join(parts)
             logger.info("[WA_BG] Agent replied | len=%d | elapsed=%.1fs", len(reply), time.time() - t0)
-            if from_number and _twilio_client:
+            if from_number:
                 summary = await _summarize_for_whatsapp(reply)
                 _push_whatsapp(from_number, summary)
             else:
@@ -1094,14 +1106,14 @@ async def whatsapp_webhook(request: Request):
                 entry["status"] = "done"
                 logger.info("[WA] Production complete | elapsed=%.1fs | result=%s",
                            time.time() - t0, entry.get("production_result"))
-                if entry.get("production_result") and from_number and _twilio_client:
+                if entry.get("production_result") and from_number:
                     url = entry["production_result"].get("youtube_url", "")
                     msg = f"Your video is live!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
                     entry["production_result"] = None
                 elif not entry.get("production_result"):
                     logger.error("[WA] Production finished but no video ID found!")
-                    if from_number and _twilio_client:
+                    if from_number:
                         _push_whatsapp(from_number,
                                       "Production finished but something went wrong — "
                                       "I couldn't find the YouTube link. Check the logs.")
@@ -1110,14 +1122,14 @@ async def whatsapp_webhook(request: Request):
             logger.error("[WA] Processing failed | error=%s | elapsed=%.1fs\n%s",
                         e, time.time() - t0, traceback.format_exc())
             entry["status"] = "idle"
-            if production_launched and from_number and _twilio_client:
+            if production_launched and from_number:
                 _push_whatsapp(from_number,
                               f"Something went wrong during production: {str(e)[:200]}")
         finally:
             if timed_out and reply_parts and not production_launched:
                 reply = "\n".join(reply_parts)
                 logger.info("[WA] Delivering timed-out reply | len=%d", len(reply))
-                if from_number and _twilio_client:
+                if from_number:
                     summary = await _summarize_for_whatsapp(reply)
                     _push_whatsapp(from_number, summary)
                 else:
@@ -1504,6 +1516,54 @@ async def delete_block_route(block_id: str):
         return {"status": "ok", "message": f"Block '{block_id}' deleted."}
     except FileNotFoundError:
         return JSONResponse({"error": f"Block '{block_id}' not found."}, status_code=404)
+
+
+# ── WhatsApp simulator API ──────────────────────────────────────
+
+@app.post("/api/wa-sim/send")
+async def wa_sim_send(request: Request):
+    """Simulate a WhatsApp message by calling the /whatsapp webhook
+    with the simulator's phone number. Returns the TwiML response
+    body as plain text (the immediate reply)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON."}, status_code=400)
+    message = body.get("message", "").strip()
+    if not message:
+        return JSONResponse({"error": "No message."}, status_code=400)
+
+    from starlette.datastructures import FormData, UploadFile
+    from starlette.requests import Request as StarletteRequest
+
+    class _FakeRequest:
+        async def form(self_inner):
+            return {"Body": message, "From": _WA_SIM_NUMBER}
+
+    resp = await whatsapp_webhook(_FakeRequest())
+    twiml_body = resp.body.decode() if hasattr(resp, "body") else ""
+    import re as _re
+    text_match = _re.search(r"<Message>(.*?)</Message>", twiml_body, _re.DOTALL)
+    text = text_match.group(1) if text_match else ""
+    from html import unescape
+    text = unescape(text)
+    return {"reply": text}
+
+
+@app.get("/api/wa-sim/push")
+async def wa_sim_poll():
+    """Poll for proactive push messages queued for the simulator number.
+    Returns and drains the queue."""
+    msgs = _wa_sim_queues.pop(_WA_SIM_NUMBER, [])
+    return {"messages": msgs}
+
+
+@app.post("/api/wa-sim/reset")
+async def wa_sim_reset():
+    """Reset the simulator session (like a 4-hour idle timeout)."""
+    _wa_sessions.pop(_WA_SIM_NUMBER, None)
+    _wa_sim_queues.pop(_WA_SIM_NUMBER, None)
+    return {"status": "ok"}
 
 
 # ── Entry point ───────────────────────────────────────────────────
