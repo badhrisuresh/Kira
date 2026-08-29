@@ -132,11 +132,6 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         ),
         instruction=load_block_prompt("web_trends_agent.md"),
         tools=[google_search],
-        generate_content_config=types.GenerateContentConfig(
-            tool_config=types.ToolConfig(
-                include_server_side_tool_invocations=True,
-            ),
-        ),
     )
 
     # ── Script Writer sub-agent ──────────────────────────────
