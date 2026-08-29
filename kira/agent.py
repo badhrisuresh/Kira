@@ -6,6 +6,8 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import google_search
 from google.genai import types
 
+google_search.bypass_multi_tools_limit = True
+
 log = logging.getLogger(__name__)
 
 from .tools.memory import read_memory, write_memory
