@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time as _time
 import uuid
 
 import requests
@@ -21,6 +22,8 @@ def concat_videos(video_urls: list[str]) -> str:
     Returns: Local file path of the concatenated video (e.g.
         /tmp/kira_final_abc123.mp4). Pass this path directly to
         upload_to_youtube()."""
+    log.info("[CONCAT] Starting concatenation | clips=%d", len(video_urls))
+    t0 = _time.time()
     _tmp = tempfile.gettempdir()
 
     if len(video_urls) == 1:
@@ -60,6 +63,7 @@ def concat_videos(video_urls: list[str]) -> str:
         os.remove(path)
     os.remove(concat_list)
 
+    log.info("[CONCAT] Success | output=%s | elapsed=%.1fs", output_path, _time.time() - t0)
     return output_path
 
 

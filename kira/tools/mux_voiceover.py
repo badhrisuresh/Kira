@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time as _time
 import uuid
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ def fit_and_mux_audio(
             pass the same VOICEOVER PROMPT text used to generate the VO.
 
     Returns: Local path to the final mp4. Pass to upload_to_youtube()."""
+    log.info("[MUX] Starting audio mux | video=%s | vo=%s | music=%s | script_len=%d",
+             video_path, voiceover_url[:60], music_url[:60], len(script))
+    t0 = _time.time()
     _tmp = tempfile.gettempdir()
     vo_path = os.path.join(_tmp, f"kira_vo_{uuid.uuid4().hex[:6]}.mp3")
     music_path = os.path.join(_tmp, f"kira_music_{uuid.uuid4().hex[:6]}.mp3")
@@ -123,6 +127,8 @@ def fit_and_mux_audio(
     os.remove(music_path)
     if os.path.exists(ass_path):
         os.remove(ass_path)
+    log.info("[MUX] Success | output=%s | captions=%s | elapsed=%.1fs",
+             output_path, has_captions, _time.time() - t0)
     return output_path
 
 

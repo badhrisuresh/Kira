@@ -17,6 +17,13 @@ from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape as xml_escape
 from dotenv import load_dotenv
 
+# ── Logging setup ────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 # Load .env from the kira package directory (same as ADK does)
 _env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(_env_path):
@@ -41,21 +48,39 @@ if _twilio_sid and _twilio_token and _twilio_from:
         logging.warning(f"Twilio client init failed: {e}")
 
 
+# ── WhatsApp simulator message queue ─────────────────────────────
+# Holds push messages per phone number so the chat UI can poll them.
+_wa_sim_queues: dict[str, list[str]] = {}
+
+_WA_SIM_NUMBER = "whatsapp:+15550001234"
+
+
 def _push_whatsapp(to: str, text: str):
-    """Send a proactive WhatsApp message via the Twilio REST API."""
-    if not _twilio_client:
-        logging.warning("Cannot push WhatsApp — Twilio client not configured")
-        return
+    """Send a proactive WhatsApp message via the Twilio REST API.
+    Also queues the message for the local WhatsApp simulator."""
     text = _format_for_whatsapp(text)
     chunks = [text[i:i+1600] for i in range(0, len(text), 1600)]
-    for chunk in chunks:
-        _twilio_client.messages.create(
-            body=chunk, from_=_twilio_from, to=to,
-        )
+
+    # Always queue for the simulator so the chat UI can pick it up
+    _wa_sim_queues.setdefault(to, []).extend(chunks)
+
+    if not _twilio_client:
+        logging.warning("[WHATSAPP] No Twilio client — message queued for simulator only")
+        return
+    logger.info("[WHATSAPP] Pushing %d chunk(s) to %s | total_len=%d", len(chunks), to, len(text))
+    for i, chunk in enumerate(chunks):
+        try:
+            _twilio_client.messages.create(
+                body=chunk, from_=_twilio_from, to=to,
+            )
+            logger.info("[WHATSAPP] Chunk %d/%d sent | len=%d", i + 1, len(chunks), len(chunk))
+        except Exception as e:
+            logger.error("[WHATSAPP] Failed to send chunk %d | error=%s", i + 1, e)
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
+from google import genai
 
 from .agent import build_agents
 from . import block_manager
@@ -63,6 +88,96 @@ from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
 
 logger = logging.getLogger(__name__)
+
+# ── Summarization client for WhatsApp responses ──────────────────
+
+_genai_client = genai.Client()
+
+
+async def _summarize_for_whatsapp(text: str) -> str:
+    """Use a fast LLM to summarize a long agent response for WhatsApp.
+
+    Keeps the original meaning but fits within WhatsApp's readability
+    constraints (~1200 chars). Returns the original if it's already short."""
+    if len(text) <= 1200:
+        return text
+    logger.info("[SUMMARIZE] Summarizing response for WhatsApp | original_len=%d", len(text))
+    t0 = time.time()
+    try:
+        response = _genai_client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=genai_types.Content(
+                role="user",
+                parts=[genai_types.Part(text=(
+                    "You are a WhatsApp message formatter. The following is a response "
+                    "from an AI content strategist called Kira. Summarize it for WhatsApp "
+                    "viewing — keep all the key information (topic names, descriptions, "
+                    "options to choose from, any URLs) but make it concise and readable "
+                    "on a phone screen. Use plain text, numbered lists, and line breaks. "
+                    "No markdown headers or bold. Keep under 1200 characters.\n\n"
+                    f"Original message:\n{text}"
+                ))],
+            ),
+        )
+        summary = response.text.strip()
+        logger.info("[SUMMARIZE] Done | summary_len=%d | elapsed=%.1fs",
+                    len(summary), time.time() - t0)
+        return summary
+    except Exception as e:
+        logger.error("[SUMMARIZE] Failed, using original | error=%s", e)
+        return text
+
+# ── ADK tracing / observability ───────────────────────────────────
+
+def _setup_tracing():
+    """Enable ADK's built-in OpenTelemetry tracing.
+
+    By default, traces go to console via the LoggingPlugin. To send
+    traces to Google Cloud Trace, set GOOGLE_CLOUD_PROJECT and
+    ADK_TRACE_TO_CLOUD=true. For a generic OTLP backend (Jaeger, etc.),
+    set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.
+    """
+    plugins = []
+    try:
+        from google.adk.plugins import LoggingPlugin
+        plugins.append(LoggingPlugin())
+        logger.info("[TRACING] LoggingPlugin enabled — all agent events will be logged")
+    except ImportError:
+        logger.warning("[TRACING] LoggingPlugin not available in this ADK version")
+
+    if os.environ.get("ADK_TRACE_TO_CLOUD", "").lower() == "true":
+        try:
+            from google.adk.telemetry.google_cloud import get_gcp_exporters, get_gcp_resource
+            from google.adk.telemetry.setup import maybe_set_otel_providers
+            import google.auth
+
+            credentials, project_id = google.auth.default()
+            otel_hooks = get_gcp_exporters(
+                enable_cloud_tracing=True,
+                enable_cloud_metrics=False,
+                enable_cloud_logging=True,
+                google_auth=(credentials, project_id),
+            )
+            otel_resource = get_gcp_resource(project_id)
+            maybe_set_otel_providers(
+                otel_hooks_to_setup=[otel_hooks],
+                otel_resource=otel_resource,
+            )
+            logger.info("[TRACING] Google Cloud Trace enabled | project=%s", project_id)
+        except Exception as e:
+            logger.warning("[TRACING] Cloud Trace setup failed: %s", e)
+    elif os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"):
+        try:
+            from google.adk.telemetry.setup import maybe_set_otel_providers
+            maybe_set_otel_providers()
+            logger.info("[TRACING] OTLP exporter enabled | endpoint=%s",
+                       os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"])
+        except Exception as e:
+            logger.warning("[TRACING] OTLP setup failed: %s", e)
+
+    return plugins
+
+_adk_plugins = _setup_tracing()
 
 # ── ADK runner setup ──────────────────────────────────────────────
 
@@ -74,10 +189,12 @@ _active_config = block_manager.get_active_block()
 _active_block_id = _active_config["id"]
 _active_block_path = block_manager.get_block_path(_active_block_id)
 _root_agent = build_agents(_active_config, _active_block_path)
+logger.info("[INIT] Building runner | block=%s | agent=%s", _active_block_id, _root_agent.name)
 runner = Runner(
     agent=_root_agent,
     app_name=APP_NAME,
     session_service=session_service,
+    plugins=_adk_plugins,
 )
 
 # Track active session and production state
@@ -120,6 +237,7 @@ async def _get_wa_session(phone: str):
     entry = _wa_sessions.get(phone)
 
     if entry and (now - entry["last_active"]) < SESSION_GAP_SECONDS:
+        idle_secs = now - entry["last_active"]
         entry["last_active"] = now
         session = await session_service.get_session(
             app_name=APP_NAME,
@@ -127,12 +245,16 @@ async def _get_wa_session(phone: str):
             session_id=entry["session_id"],
         )
         if session:
+            logger.info("[SESSION] Reusing session | phone=%s | session=%s | idle=%.0fs",
+                       phone, session.id, idle_secs)
             return session, entry
 
     user_id = f"wa_{phone.replace('whatsapp:', '').replace('+', '')}"
     session = await session_service.create_session(
         app_name=APP_NAME, user_id=user_id,
     )
+    logger.info("[SESSION] New session | phone=%s | session=%s | user_id=%s",
+               phone, session.id, user_id)
     entry = {
         "session_id": session.id,
         "user_id": user_id,
@@ -192,7 +314,9 @@ async def _activate_block(block_id: str):
     block_path = block_manager.get_block_path(block_id)
 
     new_root = build_agents(config, block_path)
-    runner = Runner(agent=new_root, app_name=APP_NAME, session_service=session_service)
+    logger.info("[BLOCK] Switching to block=%s | rebuilding runner", block_id)
+    runner = Runner(agent=new_root, app_name=APP_NAME, session_service=session_service,
+                    plugins=_adk_plugins)
 
     _root_agent = new_root
     _active_config = config
@@ -230,11 +354,13 @@ async def _get_or_create_session():
 async def _send_message(text: str) -> str:
     """Send a message to the ADK agent and collect the full response."""
     session = await _get_or_create_session()
+    logger.info("[AGENT] Sending message | session=%s | text=%s", session.id, text[:100])
     content = genai_types.Content(
         role="user",
         parts=[genai_types.Part(text=text)],
     )
     response_parts = []
+    t0 = time.time()
     async for event in runner.run_async(
         user_id=_state["user_id"],
         session_id=session.id,
@@ -244,7 +370,19 @@ async def _send_message(text: str) -> str:
             for part in event.content.parts:
                 if part.text:
                     response_parts.append(part.text)
-    return "\n".join(response_parts)
+                    logger.debug("[AGENT] Text chunk | author=%s | text=%s",
+                                getattr(event, 'author', '?'), part.text[:120])
+                if hasattr(part, "function_call") and part.function_call:
+                    logger.info("[AGENT] Tool call | tool=%s | args=%s",
+                               part.function_call.name,
+                               str(part.function_call.args)[:200] if part.function_call.args else "")
+                if hasattr(part, "function_response") and part.function_response:
+                    resp_str = str(part.function_response.response)[:200]
+                    logger.info("[AGENT] Tool result | tool=%s | result=%s",
+                               part.function_response.name, resp_str)
+    result = "\n".join(response_parts)
+    logger.info("[AGENT] Response complete | elapsed=%.1fs | len=%d", time.time() - t0, len(result))
+    return result
 
 
 def _clean_markdown(text: str) -> str:
@@ -410,6 +548,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    with open(os.path.join(STATIC_DIR, "chat.html")) as f:
+        return HTMLResponse(f.read())
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
     with open(os.path.join(STATIC_DIR, "index.html")) as f:
         return HTMLResponse(f.read())
 
@@ -518,6 +662,7 @@ async def propose():
     _state["error"] = None
     await event_bus.clear()
 
+    logger.info("[PROPOSE] Starting trend research for proposals")
     try:
         response = await _send_message(
             "What should we post today? Research trends, check memory, "
@@ -528,11 +673,12 @@ async def propose():
             "Keep each option to 2-3 lines max. I'll pick one."
         )
         proposals = _parse_multiple_proposals(response)
+        logger.info("[PROPOSE] Got %d proposals", len(proposals))
         _state["current_proposal"] = proposals
         _state["status"] = "proposed"
         return {"proposals": proposals}
     except Exception as e:
-        logger.error(f"Propose failed: {e}\n{traceback.format_exc()}")
+        logger.error("[PROPOSE] Failed: %s\n%s", e, traceback.format_exc())
         _state["status"] = "error"
         _state["error"] = str(e)
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -589,6 +735,7 @@ async def chat(request: Request):
 
     _state["error"] = None
 
+    logger.info("[CHAT] Incoming | message=%s", message[:100])
     session = await _get_or_create_session()
     content = genai_types.Content(
         role="user",
@@ -607,6 +754,7 @@ async def chat(request: Request):
         phase_order = [p[0] for p in phases]
         phase_labels = {p[0]: p[1] for p in phases}
         current_phase_idx = 0
+        t0 = time.time()
 
         try:
             async for event in runner.run_async(
@@ -625,6 +773,9 @@ async def chat(request: Request):
 
                     if hasattr(part, "function_call") and part.function_call:
                         tool_name = part.function_call.name
+                        logger.info("[CHAT] Tool call | tool=%s | args=%s",
+                                   tool_name,
+                                   str(part.function_call.args)[:200] if part.function_call.args else "")
 
                         if tool_name in _PRODUCTION_TOOLS and not production_launched:
                             production_launched = True
@@ -757,6 +908,9 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     """Process a WhatsApp message in the background and push the reply
     proactively via the Twilio REST API (no second user message needed)."""
     entry["processing"] = True
+    logger.info("[WA_BG] Starting background processing | session=%s | text=%s",
+               session.id, text[:80])
+    t0 = time.time()
     try:
         content = genai_types.Content(
             role="user", parts=[genai_types.Part(text=text)],
@@ -771,14 +925,25 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 for part in event.content.parts:
                     if part.text:
                         parts.append(part.text)
+                    if hasattr(part, "function_call") and part.function_call:
+                        logger.info("[WA_BG] Tool call | tool=%s", part.function_call.name)
+                    if hasattr(part, "function_response") and part.function_response:
+                        logger.info("[WA_BG] Tool result | tool=%s | result=%s",
+                                   part.function_response.name,
+                                   str(part.function_response.response)[:150])
         if parts:
             reply = "\n".join(parts)
-            if from_number and _twilio_client:
-                _push_whatsapp(from_number, reply)
+            logger.info("[WA_BG] Agent replied | len=%d | elapsed=%.1fs", len(reply), time.time() - t0)
+            if from_number:
+                summary = await _summarize_for_whatsapp(reply)
+                _push_whatsapp(from_number, summary)
             else:
                 entry["pending_reply"] = reply
+        else:
+            logger.warning("[WA_BG] No reply from agent | elapsed=%.1fs", time.time() - t0)
     except Exception as e:
-        logger.error(f"WhatsApp background send failed: {e}")
+        logger.error("[WA_BG] Failed | error=%s | elapsed=%.1fs\n%s",
+                    e, time.time() - t0, traceback.format_exc())
     finally:
         entry["processing"] = False
 
@@ -802,21 +967,30 @@ async def whatsapp_webhook(request: Request):
 
     session, entry = await _get_wa_session(from_number)
 
-    # ── Brand-new session → instant greeting, warm up in background ──
+    # ── Brand-new session → instant greeting, process in background ──
     if entry.get("is_new"):
         entry["is_new"] = False
+        logger.info("[WA] New session | phone=%s | body=%s", from_number, body[:80])
+        _casual = {"hi", "hey", "hello", "yo", "sup", "what's up", "whats up",
+                   "how are you", "hiya", "good morning", "good evening"}
+        if body.strip().lower().rstrip("!.?") in _casual:
+            return _twiml(
+                "Hey! I'm Kira — your AI content strategist.\n\n"
+                "What would you like to do today? I can find trending "
+                "topics, create a video, or just chat."
+            )
         asyncio.create_task(
             _wa_background_send(entry, session, body, from_number=from_number)
         )
         return _twiml(
             "Hey! I'm Kira — your AI content strategist.\n\n"
-            "I'm checking today's trends right now. "
-            "I'll send you the ideas in a few seconds!"
+            "Working on that now — I'll send you a reply in a few seconds!"
         )
 
     # ── Deliver a pending reply from a previous background run ───
     if entry.get("pending_reply"):
         reply = entry.pop("pending_reply")
+        reply = await _summarize_for_whatsapp(reply)
         return _twiml(reply)
 
     # ── Previous message still processing ────────────────────
@@ -839,18 +1013,36 @@ async def whatsapp_webhook(request: Request):
         )
 
     # ── Normal conversational flow ───────────────────────────
+    logger.info("[WA] Normal flow | phone=%s | session=%s | body=%s",
+               from_number, session.id, body[:80])
     content = genai_types.Content(
         role="user",
         parts=[genai_types.Part(text=body)],
     )
 
     reply_parts: list[str] = []
+    all_text: list[str] = []
     production_launched = False
     reply_ready = asyncio.Event()
     timed_out = False
+    _wa_progress_sent: set[str] = set()
+
+    _WA_PROGRESS_MESSAGES = {
+        "script_writer": "Writing the script...",
+        "production_planner": "Planning the shots...",
+        "generate_image": "Generating visuals...",
+        "generate_video": "Bringing visuals to life...",
+        "concat_videos": "Assembling clips...",
+        "generate_voiceover": "Recording voiceover...",
+        "generate_background_music": "Visuals ready! Composing music now...",
+        "fit_and_mux_audio": "Mixing audio and adding captions...",
+        "mux_music_only": "Adding music to the video...",
+        "upload_to_youtube": "Almost done! Uploading to YouTube...",
+    }
 
     async def _process():
         nonlocal production_launched
+        t0 = time.time()
         try:
             async for event in runner.run_async(
                 user_id=entry["user_id"],
@@ -860,50 +1052,92 @@ async def whatsapp_webhook(request: Request):
                 if not event.content or not event.content.parts:
                     continue
                 for part in event.content.parts:
-                    if part.text and not production_launched:
-                        reply_parts.append(part.text)
+                    if part.text:
+                        all_text.append(part.text)
+                        if not production_launched:
+                            reply_parts.append(part.text)
 
                     if hasattr(part, "function_call") and part.function_call:
-                        if part.function_call.name in _PRODUCTION_TOOLS and not production_launched:
+                        tool_name = part.function_call.name
+                        logger.info("[WA] Tool call | tool=%s | args=%s",
+                                   tool_name,
+                                   str(part.function_call.args)[:200] if part.function_call.args else "")
+
+                        if tool_name in _PRODUCTION_TOOLS and not production_launched:
                             production_launched = True
                             entry["status"] = "producing"
+                            logger.info("[WA] Production launched | session=%s", session.id)
                             reply_ready.set()
 
-                    if (
-                        production_launched
-                        and hasattr(part, "function_response")
-                        and part.function_response
-                        and part.function_response.name == "upload_to_youtube"
-                    ):
-                        resp = part.function_response.response
-                        if isinstance(resp, dict):
-                            for v in resp.values():
-                                if isinstance(v, str) and "youtube" in v:
-                                    entry["production_result"] = {"youtube_url": v}
+                        if production_launched and tool_name in _WA_PROGRESS_MESSAGES:
+                            msg_key = tool_name
+                            if tool_name in ("generate_image", "generate_video"):
+                                msg_key = tool_name
+                            if msg_key not in _wa_progress_sent:
+                                _wa_progress_sent.add(msg_key)
+                                progress_msg = _WA_PROGRESS_MESSAGES[tool_name]
+                                logger.info("[WA] Sending progress | phase=%s | msg=%s",
+                                           tool_name, progress_msg)
+                                if from_number and _twilio_client:
+                                    _push_whatsapp(from_number, progress_msg)
+
+                    if hasattr(part, "function_response") and part.function_response:
+                        resp_name = part.function_response.name
+                        logger.info("[WA] Tool result | tool=%s | result=%s",
+                                   resp_name,
+                                   str(part.function_response.response)[:150])
+
+                        if (
+                            production_launched
+                            and resp_name == "upload_to_youtube"
+                        ):
+                            resp = part.function_response.response
+                            if isinstance(resp, dict):
+                                for v in resp.values():
+                                    if isinstance(v, str) and "youtube" in v:
+                                        entry["production_result"] = {"youtube_url": v}
+                            elif isinstance(resp, str) and len(resp) == 11:
+                                entry["production_result"] = {
+                                    "youtube_url": f"https://youtube.com/shorts/{resp}"
+                                }
 
             if production_launched:
                 if not entry.get("production_result"):
-                    full = "\n".join(reply_parts)
+                    full = "\n".join(all_text)
                     yt = re.search(r'youtube\.com/shorts/([A-Za-z0-9_-]{11})', full)
                     if yt:
                         entry["production_result"] = {
                             "youtube_url": f"https://youtube.com/shorts/{yt.group(1)}"
                         }
                 entry["status"] = "done"
-                if entry.get("production_result") and from_number and _twilio_client:
+                logger.info("[WA] Production complete | elapsed=%.1fs | result=%s",
+                           time.time() - t0, entry.get("production_result"))
+                if entry.get("production_result") and from_number:
                     url = entry["production_result"].get("youtube_url", "")
                     msg = f"Your video is live!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
                     entry["production_result"] = None
+                elif not entry.get("production_result"):
+                    logger.error("[WA] Production finished but no video ID found!")
+                    if from_number:
+                        _push_whatsapp(from_number,
+                                      "Production finished but something went wrong — "
+                                      "I couldn't find the YouTube link. Check the logs.")
 
         except Exception as e:
-            logger.error(f"WhatsApp processing failed: {e}\n{traceback.format_exc()}")
+            logger.error("[WA] Processing failed | error=%s | elapsed=%.1fs\n%s",
+                        e, time.time() - t0, traceback.format_exc())
             entry["status"] = "idle"
+            if production_launched and from_number:
+                _push_whatsapp(from_number,
+                              f"Something went wrong during production: {str(e)[:200]}")
         finally:
             if timed_out and reply_parts and not production_launched:
                 reply = "\n".join(reply_parts)
-                if from_number and _twilio_client:
-                    _push_whatsapp(from_number, reply)
+                logger.info("[WA] Delivering timed-out reply | len=%d", len(reply))
+                if from_number:
+                    summary = await _summarize_for_whatsapp(reply)
+                    _push_whatsapp(from_number, summary)
                 else:
                     entry["pending_reply"] = reply
             if not reply_ready.is_set():
@@ -915,6 +1149,7 @@ async def whatsapp_webhook(request: Request):
         await asyncio.wait_for(reply_ready.wait(), timeout=14)
     except asyncio.TimeoutError:
         timed_out = True
+        logger.info("[WA] Webhook timed out (14s) | will push reply later")
         return _twiml(
             "Still pulling that together — "
             "I'll send you the answer in a few seconds!"
@@ -926,7 +1161,7 @@ async def whatsapp_webhook(request: Request):
         reply = (
             reply.rstrip()
             + "\n\nStarting production now! I'll have your video ready "
-            "in a few minutes. Message me to check on progress."
+            "in a few minutes. I'll keep you posted on progress."
         )
 
     return _twiml(reply)
@@ -984,6 +1219,8 @@ async def approve(request: Request):
 
 async def _run_production():
     """Run the full production pipeline via ADK, emitting events."""
+    logger.info("[PRODUCTION] Starting production pipeline")
+    t0 = time.time()
     try:
         session = await _get_or_create_session()
         chosen = _state.get("chosen_topic", "")
@@ -1014,6 +1251,9 @@ async def _run_production():
 
                     if hasattr(part, 'function_call') and part.function_call:
                         tool_name = part.function_call.name
+                        logger.info("[PRODUCTION] Tool call | tool=%s | args=%s",
+                                   tool_name,
+                                   str(part.function_call.args)[:200] if part.function_call.args else "")
                         if tool_name in _TOOL_TO_PHASE:
                             phase = _TOOL_TO_PHASE[tool_name]
                             if phase in phase_order:
@@ -1036,6 +1276,9 @@ async def _run_production():
 
                     if hasattr(part, 'function_response') and part.function_response:
                         resp_name = part.function_response.name
+                        logger.info("[PRODUCTION] Tool result | tool=%s | result=%s",
+                                   resp_name,
+                                   str(part.function_response.response)[:200])
                         if resp_name in _TOOL_TO_PHASE:
                             phase = _TOOL_TO_PHASE[resp_name]
                             if phase in phase_order:
@@ -1083,6 +1326,8 @@ async def _run_production():
             "youtube_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
         }
         _state["status"] = "done"
+        logger.info("[PRODUCTION] Complete | video_id=%s | elapsed=%.1fs",
+                   video_id, time.time() - t0)
 
         await event_bus.emit(ProductionEvent(
             phase="done",
@@ -1093,7 +1338,8 @@ async def _run_production():
         ))
 
     except Exception as e:
-        logger.error(f"Production failed: {e}\n{traceback.format_exc()}")
+        logger.error("[PRODUCTION] Failed | error=%s | elapsed=%.1fs\n%s",
+                    e, time.time() - t0, traceback.format_exc())
         _state["status"] = "error"
         _state["error"] = str(e)
         await event_bus.emit(ProductionEvent(
@@ -1276,6 +1522,54 @@ async def delete_block_route(block_id: str):
         return {"status": "ok", "message": f"Block '{block_id}' deleted."}
     except FileNotFoundError:
         return JSONResponse({"error": f"Block '{block_id}' not found."}, status_code=404)
+
+
+# ── WhatsApp simulator API ──────────────────────────────────────
+
+@app.post("/api/wa-sim/send")
+async def wa_sim_send(request: Request):
+    """Simulate a WhatsApp message by calling the /whatsapp webhook
+    with the simulator's phone number. Returns the TwiML response
+    body as plain text (the immediate reply)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON."}, status_code=400)
+    message = body.get("message", "").strip()
+    if not message:
+        return JSONResponse({"error": "No message."}, status_code=400)
+
+    from starlette.datastructures import FormData, UploadFile
+    from starlette.requests import Request as StarletteRequest
+
+    class _FakeRequest:
+        async def form(self_inner):
+            return {"Body": message, "From": _WA_SIM_NUMBER}
+
+    resp = await whatsapp_webhook(_FakeRequest())
+    twiml_body = resp.body.decode() if hasattr(resp, "body") else ""
+    import re as _re
+    text_match = _re.search(r"<Message>(.*?)</Message>", twiml_body, _re.DOTALL)
+    text = text_match.group(1) if text_match else ""
+    from html import unescape
+    text = unescape(text)
+    return {"reply": text}
+
+
+@app.get("/api/wa-sim/push")
+async def wa_sim_poll():
+    """Poll for proactive push messages queued for the simulator number.
+    Returns and drains the queue."""
+    msgs = _wa_sim_queues.pop(_WA_SIM_NUMBER, [])
+    return {"messages": msgs}
+
+
+@app.post("/api/wa-sim/reset")
+async def wa_sim_reset():
+    """Reset the simulator session (like a 4-hour idle timeout)."""
+    _wa_sessions.pop(_WA_SIM_NUMBER, None)
+    _wa_sim_queues.pop(_WA_SIM_NUMBER, None)
+    return {"status": "ok"}
 
 
 # ── Entry point ───────────────────────────────────────────────────
