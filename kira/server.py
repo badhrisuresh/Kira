@@ -548,6 +548,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    with open(os.path.join(STATIC_DIR, "chat.html")) as f:
+        return HTMLResponse(f.read())
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
     with open(os.path.join(STATIC_DIR, "index.html")) as f:
         return HTMLResponse(f.read())
 

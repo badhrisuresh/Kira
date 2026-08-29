@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "kira-ui",
-      "runtimeExecutable": "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+      "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "uvicorn", "kira.server:app", "--host", "127.0.0.1", "--port", "8080"],
       "port": 8080
     }
