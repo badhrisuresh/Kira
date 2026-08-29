@@ -971,9 +971,6 @@ async def whatsapp_webhook(request: Request):
     if entry.get("is_new"):
         entry["is_new"] = False
         logger.info("[WA] New session | phone=%s | body=%s", from_number, body[:80])
-        asyncio.create_task(
-            _wa_background_send(entry, session, body, from_number=from_number)
-        )
         _casual = {"hi", "hey", "hello", "yo", "sup", "what's up", "whats up",
                    "how are you", "hiya", "good morning", "good evening"}
         if body.strip().lower().rstrip("!.?") in _casual:
@@ -982,6 +979,9 @@ async def whatsapp_webhook(request: Request):
                 "What would you like to do today? I can find trending "
                 "topics, create a video, or just chat."
             )
+        asyncio.create_task(
+            _wa_background_send(entry, session, body, from_number=from_number)
+        )
         return _twiml(
             "Hey! I'm Kira — your AI content strategist.\n\n"
             "Working on that now — I'll send you a reply in a few seconds!"
