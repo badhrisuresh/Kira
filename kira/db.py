@@ -33,6 +33,11 @@ END
 $$;
 """
 
+_POST_SCHEMA_MIGRATION = """
+ALTER TABLE messages ALTER COLUMN user_phone DROP NOT NULL;
+ALTER TABLE productions ALTER COLUMN user_phone DROP NOT NULL;
+"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     phone       TEXT PRIMARY KEY,
@@ -51,7 +56,7 @@ CREATE TABLE IF NOT EXISTS wa_sessions (
 CREATE TABLE IF NOT EXISTS messages (
     id          SERIAL PRIMARY KEY,
     session_id  TEXT NOT NULL REFERENCES wa_sessions(id),
-    user_phone  TEXT NOT NULL,
+    user_phone  TEXT,
     role        TEXT NOT NULL,
     body        TEXT NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT NOW()
@@ -60,7 +65,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS productions (
     id           SERIAL PRIMARY KEY,
     session_id   TEXT REFERENCES wa_sessions(id),
-    user_phone   TEXT NOT NULL REFERENCES users(phone),
+    user_phone   TEXT REFERENCES users(phone),
     block_id     TEXT,
     topic        TEXT,
     gcs_url      TEXT,
@@ -129,6 +134,7 @@ async def init() -> None:
     async with _pool.acquire() as conn:
         await conn.execute(_MIGRATION)
         await conn.execute(_SCHEMA)
+        await conn.execute(_POST_SCHEMA_MIGRATION)
     log.info("[DB] Connected and schema applied")
 
 
@@ -210,14 +216,14 @@ async def get_latest_session(user_phone: str) -> Optional[asyncpg.Record]:
 # ── Messages ─────────────────────────────────────────────────────
 
 async def save_message(
-    session_id: str, user_phone: str, role: str, body: str,
+    session_id: str, role: str, body: str,
 ) -> None:
     if not _pool:
         return
     await _pool.execute(
-        """INSERT INTO messages (session_id, user_phone, role, body)
-           VALUES ($1, $2, $3, $4)""",
-        session_id, user_phone, role, body,
+        """INSERT INTO messages (session_id, role, body)
+           VALUES ($1, $2, $3)""",
+        session_id, role, body,
     )
 
 
@@ -234,15 +240,15 @@ async def get_messages(session_id: str, limit: int = 50) -> list[asyncpg.Record]
 # ── Productions ──────────────────────────────────────────────────
 
 async def create_production(
-    session_id: str, user_phone: str, block_id: str, topic: str = "",
+    session_id: str, block_id: str, topic: str = "",
 ) -> int:
     if not _pool:
         return 0
     return await _pool.fetchval(
-        """INSERT INTO productions (session_id, user_phone, block_id, topic, status)
-           VALUES ($1, $2, $3, $4, 'producing')
+        """INSERT INTO productions (session_id, block_id, topic, status)
+           VALUES ($1, $2, $3, 'producing')
            RETURNING id""",
-        session_id, user_phone, block_id, topic,
+        session_id, block_id, topic,
     )
 
 
@@ -278,8 +284,10 @@ async def get_user_productions(
     if not _pool:
         return []
     return await _pool.fetch(
-        """SELECT * FROM productions WHERE user_phone = $1
-           ORDER BY created_at DESC LIMIT $2""",
+        """SELECT p.* FROM productions p
+           JOIN wa_sessions s ON p.session_id = s.id
+           WHERE s.user_phone = $1
+           ORDER BY p.created_at DESC LIMIT $2""",
         user_phone, limit,
     )
 

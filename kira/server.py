@@ -1076,7 +1076,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                             reply = "\n".join(reply_parts)
                             summary = await _summarize_for_whatsapp(reply)
                             _push_whatsapp(from_number, summary)
-                            await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                            await db.save_message(entry["session_id"], "assistant", summary)
                             reply_sent = True
 
                     if production_launched and tool_name in _BG_PROGRESS_MESSAGES:
@@ -1108,7 +1108,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 url = result.get("youtube_url") or result.get("gcs_url", "")
                 msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                 _push_whatsapp(from_number, msg)
-                await db.save_message(entry["session_id"], from_number, "assistant", msg)
+                await db.save_message(entry["session_id"], "assistant", msg)
                 entry["production_result"] = None
             elif not entry.get("production_result") and from_number:
                 _push_whatsapp(from_number,
@@ -1120,7 +1120,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
             if from_number:
                 summary = await _summarize_for_whatsapp(reply)
                 _push_whatsapp(from_number, summary)
-                await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                await db.save_message(entry["session_id"], "assistant", summary)
             else:
                 entry["pending_reply"] = reply
         elif not reply_parts:
@@ -1156,7 +1156,7 @@ async def whatsapp_webhook(request: Request):
 
     session, entry = await _get_wa_session(from_number)
 
-    await db.save_message(entry["session_id"], from_number, "user", body)
+    await db.save_message(entry["session_id"], "user", body)
 
     # ── Brand-new session → instant greeting, process in background ──
     if entry.get("is_new"):
@@ -1175,7 +1175,7 @@ async def whatsapp_webhook(request: Request):
                 "What would you like to do today? I can find trending "
                 "topics, create a video, or just chat."
             )
-            await db.save_message(entry["session_id"], from_number, "assistant", greeting)
+            await db.save_message(entry["session_id"], "assistant", greeting)
             return _twiml(greeting)
         logger.info("[WA] Non-casual new session — launching background agent")
         asyncio.create_task(
@@ -1185,7 +1185,7 @@ async def whatsapp_webhook(request: Request):
             "Hey! I'm Kira — your AI content strategist.\n\n"
             "Working on that now — I'll send you a reply in a few seconds!"
         )
-        await db.save_message(entry["session_id"], from_number, "assistant", ack)
+        await db.save_message(entry["session_id"], "assistant", ack)
         return _twiml(ack)
 
     # ── Deliver a pending reply from a previous background run ───
@@ -1331,7 +1331,7 @@ async def whatsapp_webhook(request: Request):
                     url = result.get("youtube_url") or result.get("gcs_url", "")
                     msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
-                    await db.save_message(entry["session_id"], from_number, "assistant", msg)
+                    await db.save_message(entry["session_id"], "assistant", msg)
                     entry["production_result"] = None
                 elif not entry.get("production_result"):
                     logger.error("[WA] Production finished but no video link found!")
@@ -1354,7 +1354,7 @@ async def whatsapp_webhook(request: Request):
                 if from_number:
                     summary = await _summarize_for_whatsapp(reply)
                     _push_whatsapp(from_number, summary)
-                    await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                    await db.save_message(entry["session_id"], "assistant", summary)
                 else:
                     entry["pending_reply"] = reply
             await _flush_user_memory()
@@ -1382,7 +1382,7 @@ async def whatsapp_webhook(request: Request):
             "in a few minutes. I'll keep you posted on progress."
         )
 
-    await db.save_message(entry["session_id"], from_number, "assistant", reply)
+    await db.save_message(entry["session_id"], "assistant", reply)
     return _twiml(reply)
 
 
