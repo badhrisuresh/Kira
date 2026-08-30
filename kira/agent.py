@@ -143,7 +143,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         description=(
             "Video production planner. Takes a finished script and breaks it "
             "into a shot-by-shot production spec: number of shots (2-4), "
-            "each shot's duration, reference image prompts, video generation "
+            "each shot's duration, starting image prompts, video generation "
             "prompts, and continuity notes."
             + (" Includes a single timed VOICEOVER PROMPT for TTS." if narration_enabled else "")
             + " Call this AFTER script_writer returns the script."
@@ -174,7 +174,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         description=(
             "Production agent that takes a confirmed creative brief and "
             "autonomously produces the final video: writes a script, plans "
-            "shots, generates reference images, generates multi-shot video, "
+            "shots, generates starting images, generates multi-shot video, "
             "concatenates clips, "
             + ("generates TTS voiceover and " if narration_enabled else "")
             + "background music, muxes audio, publishes the video, and saves "

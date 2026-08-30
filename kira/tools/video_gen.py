@@ -12,17 +12,18 @@ from .. import media as media_mod
 log = logging.getLogger(__name__)
 
 
-def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str:
-    """Generate a video clip from 1+ reference images using Gemini Omni
-    Flash reference-to-video on fal.ai.
+def generate_video(image_url: str, prompt: str, duration: int = 5) -> str:
+    """Generate a video clip from a starting image using Gemini Omni
+    Flash image-to-video on fal.ai.
 
     Args:
-        image_urls: List of reference image URLs (from generate_image).
+        image_url: URL of the starting image (from generate_image).
+            The video will animate from this image.
         prompt: Motion and visual prompt. Describe camera movement and
             subject action only — no audio, SFX, or narration (clip
             audio is discarded; TTS and background music are added
             later). Always specify 9:16 vertical.
-        duration: Clip length in seconds, integer 3-10. Default 8.
+        duration: Clip length in seconds, integer 5-10. Default 5.
             Choose based on the shot's role in the edit:
             shorter for quick hooks or cuts, longer for payoff or
             establishing shots.
@@ -31,18 +32,18 @@ def generate_video(image_urls: list[str], prompt: str, duration: int = 8) -> str
     try:
         duration_int = int(duration)
     except (TypeError, ValueError):
-        duration_int = 8
-    if duration_int < 3 or duration_int > 10:
-        duration_int = 8
+        duration_int = 5
+    if duration_int < 5 or duration_int > 10:
+        duration_int = 5
 
-    log.info("[VIDEO_GEN] Starting video generation | images=%d | duration=%ds | prompt=%s",
-             len(image_urls), duration_int, prompt[:120])
+    log.info("[VIDEO_GEN] Starting video generation | image=%s | duration=%ds | prompt=%s",
+             image_url[:80], duration_int, prompt[:120])
     t0 = time.time()
     try:
         result = fal_client.subscribe(
-            "google/gemini-omni-flash/reference-to-video",
+            "google/gemini-omni-flash/image-to-video",
             arguments={
-                "image_urls": image_urls,
+                "image_url": image_url,
                 "prompt": prompt,
                 "duration": duration_int,
                 "aspect_ratio": "9:16",
