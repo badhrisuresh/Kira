@@ -88,6 +88,7 @@ from . import db
 from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
 from .tools import memory as memory_mod
+from .tools import youtube as youtube_mod
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,36 @@ _TOOL_TO_PHASE = {
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
 
+# ── Rate limits (non-owner WhatsApp users) ─────────────────────
+_OWNER_NUMBERS: set[str] = {
+    "whatsapp:+919840733969",
+    "whatsapp:+14132106772",
+}
+_DAILY_VIDEO_LIMIT = 1
+_TOTAL_VIDEO_LIMIT = 3
+
+
+async def _check_rate_limit(phone: str) -> str | None:
+    """Return a user-facing message if the phone is over its limit, else None."""
+    if not phone or phone in _OWNER_NUMBERS:
+        return None
+    if not db.is_enabled():
+        return None
+    today = await db.count_user_productions_today(phone)
+    if today >= _DAILY_VIDEO_LIMIT:
+        return (
+            "You've already made a video today! "
+            "Come back tomorrow for another one."
+        )
+    total = await db.count_user_productions_total(phone)
+    if total >= _TOTAL_VIDEO_LIMIT:
+        return (
+            "You've used all 3 of your free videos. "
+            "Thanks for trying Kira!"
+        )
+    return None
+
+
 # ── WhatsApp per-user sessions ───────────────────────────────────
 
 SESSION_GAP_SECONDS = 2 * 3600  # 2 hours of silence → new session
@@ -388,7 +419,7 @@ def _get_phases() -> list[tuple[str, str]]:
     phases.append(("music", "Creating music"))
     phases.append(("mux", "Mixing audio" if narration else "Adding music"))
     phases.extend([
-        ("upload", "Uploading to YouTube"),
+        ("upload", "Publishing video"),
         ("memory", "Saving to memory"),
     ])
     return phases
@@ -826,6 +857,7 @@ async def chat(request: Request):
     _state["error"] = None
 
     logger.info("[CHAT] Incoming | message=%s", message[:100])
+    youtube_mod.configure("")
     session = await _get_or_create_session()
     content = genai_types.Content(
         role="user",
@@ -1015,7 +1047,23 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     logger.info("[WA_BG] Starting background processing | session=%s | text=%s",
                session.id, text[:80])
     await _load_user_memory(from_number)
+    youtube_mod.configure(from_number)
+
+    limit_msg = await _check_rate_limit(from_number)
+    if limit_msg:
+        text = (
+            f"{text}\n\n[SYSTEM: This user has reached their video limit. "
+            f"Do NOT start production or transfer to execution_agent. "
+            f"Instead tell them: {limit_msg}]"
+        )
+
     t0 = time.time()
+
+    _BG_RESEARCH_PROGRESS = {
+        "search_youtube_trends": "\U0001f50d Looking up what's trending on YouTube...",
+        "search_google_trends": "\U0001f4ca Checking Google Trends data...",
+        "web_search": "\U0001f310 Researching the latest news...",
+    }
 
     _BG_PROGRESS_MESSAGES = {
         "script_writer": "Writing the script...",
@@ -1054,15 +1102,21 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                     tool_name = part.function_call.name
                     logger.info("[WA_BG] Tool call | tool=%s", tool_name)
 
+                    if tool_name in _BG_RESEARCH_PROGRESS and tool_name not in progress_sent:
+                        progress_sent.add(tool_name)
+                        if from_number:
+                            _push_whatsapp(from_number, _BG_RESEARCH_PROGRESS[tool_name])
+
                     if tool_name in _PRODUCTION_TOOLS and not production_launched:
                         production_launched = True
                         entry["status"] = "producing"
                         logger.info("[WA_BG] Production launched | session=%s", session.id)
+                        await db.create_production(entry["session_id"], _active_block_id)
                         if reply_parts and from_number and not reply_sent:
                             reply = "\n".join(reply_parts)
                             summary = await _summarize_for_whatsapp(reply)
                             _push_whatsapp(from_number, summary)
-                            await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                            await db.save_message(entry["session_id"], "assistant", summary)
                             reply_sent = True
 
                     if production_launched and tool_name in _BG_PROGRESS_MESSAGES:
@@ -1094,7 +1148,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 url = result.get("youtube_url") or result.get("gcs_url", "")
                 msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                 _push_whatsapp(from_number, msg)
-                await db.save_message(entry["session_id"], from_number, "assistant", msg)
+                await db.save_message(entry["session_id"], "assistant", msg)
                 entry["production_result"] = None
             elif not entry.get("production_result") and from_number:
                 _push_whatsapp(from_number,
@@ -1106,7 +1160,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
             if from_number:
                 summary = await _summarize_for_whatsapp(reply)
                 _push_whatsapp(from_number, summary)
-                await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                await db.save_message(entry["session_id"], "assistant", summary)
             else:
                 entry["pending_reply"] = reply
         elif not reply_parts:
@@ -1142,12 +1196,21 @@ async def whatsapp_webhook(request: Request):
 
     session, entry = await _get_wa_session(from_number)
 
-    await db.save_message(entry["session_id"], from_number, "user", body)
+    await db.save_message(entry["session_id"], "user", body)
 
     # ── Brand-new session → instant greeting, process in background ──
     if entry.get("is_new"):
         entry["is_new"] = False
         logger.info("[WA] New session | phone=%s | body=%r", from_number, body[:80])
+
+        is_returning = False
+        if db.is_enabled():
+            existing_user = await db.get_user(from_number)
+            if existing_user:
+                is_returning = True
+                await _load_user_memory(from_number)
+        logger.info("[WA] User type | phone=%s | returning=%s", from_number, is_returning)
+
         _casual = {"hi", "hey", "hello", "yo", "sup", "what's up", "whats up",
                    "how are you", "hiya", "good morning", "good evening"}
         normalized = body.strip().lower().rstrip("!.?")
@@ -1155,23 +1218,36 @@ async def whatsapp_webhook(request: Request):
         logger.info("[WA] Greeting check | body=%r | normalized=%r | is_casual=%s",
                    body, normalized, is_casual)
         if is_casual:
-            logger.info("[WA] Casual greeting — returning simple greeting, no agent call")
-            greeting = (
-                "Hey! I'm Kira — your AI content strategist.\n\n"
-                "What would you like to do today? I can find trending "
-                "topics, create a video, or just chat."
-            )
-            await db.save_message(entry["session_id"], from_number, "assistant", greeting)
+            logger.info("[WA] Casual greeting — returning greeting, no agent call")
+            if is_returning:
+                greeting = (
+                    "Welcome back! Ready to make another video?\n\n"
+                    "Just say \"let's go\" and I'll find what's trending right now."
+                )
+            else:
+                greeting = (
+                    "Hey! I'm Kira — I make YouTube Shorts about space "
+                    "and the cosmos, powered by AI.\n\n"
+                    "Just say \"let's make a video\" and I'll find what's "
+                    "trending, pitch you 3 topic ideas, and produce a "
+                    "finished Short in about 5 minutes. You just pick the topic!\n\n"
+                    "Ready when you are 🚀"
+                )
+            await db.save_message(entry["session_id"], "assistant", greeting)
             return _twiml(greeting)
         logger.info("[WA] Non-casual new session — launching background agent")
         asyncio.create_task(
             _wa_background_send(entry, session, body, from_number=from_number)
         )
-        ack = (
-            "Hey! I'm Kira — your AI content strategist.\n\n"
-            "Working on that now — I'll send you a reply in a few seconds!"
-        )
-        await db.save_message(entry["session_id"], from_number, "assistant", ack)
+        if is_returning:
+            ack = "Welcome back! On it — give me a few seconds..."
+        else:
+            ack = (
+                "Hey! I'm Kira — I make YouTube Shorts about space, "
+                "powered by AI.\n\n"
+                "On it! Give me a few seconds..."
+            )
+        await db.save_message(entry["session_id"], "assistant", ack)
         return _twiml(ack)
 
     # ── Deliver a pending reply from a previous background run ───
@@ -1203,9 +1279,20 @@ async def whatsapp_webhook(request: Request):
     logger.info("[WA] Normal flow | phone=%s | session=%s | body=%s",
                from_number, session.id, body[:80])
     await _load_user_memory(from_number)
+    youtube_mod.configure(from_number)
+
+    limit_msg = await _check_rate_limit(from_number)
+    msg_text = body
+    if limit_msg:
+        msg_text = (
+            f"{body}\n\n[SYSTEM: This user has reached their video limit. "
+            f"Do NOT start production or transfer to execution_agent. "
+            f"Instead tell them: {limit_msg}]"
+        )
+
     content = genai_types.Content(
         role="user",
-        parts=[genai_types.Part(text=body)],
+        parts=[genai_types.Part(text=msg_text)],
     )
 
     reply_parts: list[str] = []
@@ -1214,6 +1301,12 @@ async def whatsapp_webhook(request: Request):
     reply_ready = asyncio.Event()
     timed_out = False
     _wa_progress_sent: set[str] = set()
+
+    _WA_RESEARCH_PROGRESS = {
+        "search_youtube_trends": "\U0001f50d Looking up what's trending on YouTube...",
+        "search_google_trends": "\U0001f4ca Checking Google Trends data...",
+        "web_search": "\U0001f310 Researching the latest news...",
+    }
 
     _WA_PROGRESS_MESSAGES = {
         "script_writer": "Writing the script...",
@@ -1251,10 +1344,16 @@ async def whatsapp_webhook(request: Request):
                                    tool_name,
                                    str(part.function_call.args)[:200] if part.function_call.args else "")
 
+                        if tool_name in _WA_RESEARCH_PROGRESS and tool_name not in _wa_progress_sent:
+                            _wa_progress_sent.add(tool_name)
+                            if from_number:
+                                _push_whatsapp(from_number, _WA_RESEARCH_PROGRESS[tool_name])
+
                         if tool_name in _PRODUCTION_TOOLS and not production_launched:
                             production_launched = True
                             entry["status"] = "producing"
                             logger.info("[WA] Production launched | session=%s", session.id)
+                            await db.create_production(entry["session_id"], _active_block_id)
                             reply_ready.set()
 
                         if production_launched and tool_name in _WA_PROGRESS_MESSAGES:
@@ -1305,7 +1404,7 @@ async def whatsapp_webhook(request: Request):
                     url = result.get("youtube_url") or result.get("gcs_url", "")
                     msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
-                    await db.save_message(entry["session_id"], from_number, "assistant", msg)
+                    await db.save_message(entry["session_id"], "assistant", msg)
                     entry["production_result"] = None
                 elif not entry.get("production_result"):
                     logger.error("[WA] Production finished but no video link found!")
@@ -1328,7 +1427,7 @@ async def whatsapp_webhook(request: Request):
                 if from_number:
                     summary = await _summarize_for_whatsapp(reply)
                     _push_whatsapp(from_number, summary)
-                    await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                    await db.save_message(entry["session_id"], "assistant", summary)
                 else:
                     entry["pending_reply"] = reply
             await _flush_user_memory()
@@ -1356,7 +1455,7 @@ async def whatsapp_webhook(request: Request):
             "in a few minutes. I'll keep you posted on progress."
         )
 
-    await db.save_message(entry["session_id"], from_number, "assistant", reply)
+    await db.save_message(entry["session_id"], "assistant", reply)
     return _twiml(reply)
 
 
@@ -1413,6 +1512,7 @@ async def approve(request: Request):
 async def _run_production():
     """Run the full production pipeline via ADK, emitting events."""
     logger.info("[PRODUCTION] Starting production pipeline")
+    youtube_mod.configure("")
     t0 = time.time()
     try:
         session = await _get_or_create_session()

@@ -4,6 +4,14 @@ Autonomous AI video content generator that works via WhatsApp. Kira researches t
 
 Built with Google ADK (Gemini), Fal.ai, FFmpeg, and Twilio.
 
+## Try it on WhatsApp
+
+Scan the QR code to chat with Kira directly on WhatsApp:
+
+<p align="center">
+  <img src="qr.png" alt="Chat with Kira on WhatsApp" width="250" />
+</p>
+
 ## How it works
 
 1. You send a WhatsApp message (or use the web simulator)
