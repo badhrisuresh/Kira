@@ -56,6 +56,7 @@ jobs:
               GOOGLE_API_KEY=GOOGLE_API_KEY:latest,\
               FAL_KEY=FAL_KEY:latest,\
               GCS_BUCKET_NAME=GCS_BUCKET_NAME:latest,\
+              DATABASE_URL=DATABASE_URL:latest,\
               YOUTUBE_TOKEN_JSON=YOUTUBE_TOKEN_JSON:latest,\
               TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,\
               TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,\
