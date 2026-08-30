@@ -88,6 +88,7 @@ from . import db
 from .events import event_bus, ProductionEvent
 from .tools.memory import read_memory, save_memory, write_memory
 from .tools import memory as memory_mod
+from .tools import youtube as youtube_mod
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +389,7 @@ def _get_phases() -> list[tuple[str, str]]:
     phases.append(("music", "Creating music"))
     phases.append(("mux", "Mixing audio" if narration else "Adding music"))
     phases.extend([
-        ("upload", "Uploading to YouTube"),
+        ("upload", "Publishing video"),
         ("memory", "Saving to memory"),
     ])
     return phases
@@ -826,6 +827,7 @@ async def chat(request: Request):
     _state["error"] = None
 
     logger.info("[CHAT] Incoming | message=%s", message[:100])
+    youtube_mod.configure("")
     session = await _get_or_create_session()
     content = genai_types.Content(
         role="user",
@@ -1015,7 +1017,14 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     logger.info("[WA_BG] Starting background processing | session=%s | text=%s",
                session.id, text[:80])
     await _load_user_memory(from_number)
+    youtube_mod.configure(from_number)
     t0 = time.time()
+
+    _BG_RESEARCH_PROGRESS = {
+        "search_youtube_trends": "\U0001f50d Looking up what's trending on YouTube...",
+        "search_google_trends": "\U0001f4ca Checking Google Trends data...",
+        "web_search": "\U0001f310 Researching the latest news...",
+    }
 
     _BG_PROGRESS_MESSAGES = {
         "script_writer": "Writing the script...",
@@ -1053,6 +1062,11 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 if hasattr(part, "function_call") and part.function_call:
                     tool_name = part.function_call.name
                     logger.info("[WA_BG] Tool call | tool=%s", tool_name)
+
+                    if tool_name in _BG_RESEARCH_PROGRESS and tool_name not in progress_sent:
+                        progress_sent.add(tool_name)
+                        if from_number:
+                            _push_whatsapp(from_number, _BG_RESEARCH_PROGRESS[tool_name])
 
                     if tool_name in _PRODUCTION_TOOLS and not production_launched:
                         production_launched = True
@@ -1203,6 +1217,7 @@ async def whatsapp_webhook(request: Request):
     logger.info("[WA] Normal flow | phone=%s | session=%s | body=%s",
                from_number, session.id, body[:80])
     await _load_user_memory(from_number)
+    youtube_mod.configure(from_number)
     content = genai_types.Content(
         role="user",
         parts=[genai_types.Part(text=body)],
@@ -1214,6 +1229,12 @@ async def whatsapp_webhook(request: Request):
     reply_ready = asyncio.Event()
     timed_out = False
     _wa_progress_sent: set[str] = set()
+
+    _WA_RESEARCH_PROGRESS = {
+        "search_youtube_trends": "\U0001f50d Looking up what's trending on YouTube...",
+        "search_google_trends": "\U0001f4ca Checking Google Trends data...",
+        "web_search": "\U0001f310 Researching the latest news...",
+    }
 
     _WA_PROGRESS_MESSAGES = {
         "script_writer": "Writing the script...",
@@ -1250,6 +1271,11 @@ async def whatsapp_webhook(request: Request):
                         logger.info("[WA] Tool call | tool=%s | args=%s",
                                    tool_name,
                                    str(part.function_call.args)[:200] if part.function_call.args else "")
+
+                        if tool_name in _WA_RESEARCH_PROGRESS and tool_name not in _wa_progress_sent:
+                            _wa_progress_sent.add(tool_name)
+                            if from_number:
+                                _push_whatsapp(from_number, _WA_RESEARCH_PROGRESS[tool_name])
 
                         if tool_name in _PRODUCTION_TOOLS and not production_launched:
                             production_launched = True
@@ -1413,6 +1439,7 @@ async def approve(request: Request):
 async def _run_production():
     """Run the full production pipeline via ADK, emitting events."""
     logger.info("[PRODUCTION] Starting production pipeline")
+    youtube_mod.configure("")
     t0 = time.time()
     try:
         session = await _get_or_create_session()

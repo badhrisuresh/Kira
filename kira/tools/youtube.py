@@ -18,6 +18,18 @@ log = logging.getLogger(__name__)
 
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "token.pickle")
 
+_current_user_phone: str = ""
+_OWNER_WHATSAPP_NUMBER = os.environ.get("OWNER_WHATSAPP_NUMBER", "whatsapp:+919840733969")
+
+
+def configure(phone: str) -> None:
+    global _current_user_phone
+    _current_user_phone = phone
+
+
+def _is_owner() -> bool:
+    return not _current_user_phone or _current_user_phone == _OWNER_WHATSAPP_NUMBER
+
 
 def _has_youtube_creds() -> bool:
     if os.environ.get("YOUTUBE_TOKEN_JSON"):
@@ -107,7 +119,7 @@ def publish_video(video_url: str, title: str, description: str) -> dict:
             result["gcs_url"] = gcs_url
             log.info("[PUBLISH] GCS upload done | url=%s", gcs_url)
 
-    if _has_youtube_creds():
+    if _has_youtube_creds() and _is_owner():
         try:
             video_id = _upload_to_youtube_inner(local_path, title, description)
             result["video_id"] = video_id
@@ -118,6 +130,9 @@ def publish_video(video_url: str, title: str, description: str) -> dict:
             log.error("[PUBLISH] YouTube upload failed (GCS still available): %s", e)
             if "gcs_url" not in result:
                 raise
+    elif not _is_owner():
+        log.info("[PUBLISH] Non-owner user — skipping YouTube upload | phone=%s",
+                 _current_user_phone)
     elif not result.get("gcs_url"):
         raise RuntimeError(
             "Neither GCS nor YouTube credentials configured — cannot publish video"

@@ -20,3 +20,6 @@ venv/
 # ADK local runtime state
 .adk/
 *.db
+
+# Planning notes
+plan.md
