@@ -87,7 +87,7 @@ def fit_and_mux_audio(
             write_ass_file(captions, width, height, ass_path, time_scale=1 / vo_tempo)
             has_captions = True
     except Exception as e:
-        print(f"Captions skipped (transcription failed): {e}")
+        log.warning("[MUX] Captions skipped (transcription failed): %s", e)
 
     # Input 0: video (video stream only). Inputs 1/2: music + VO.
     audio_filter = (

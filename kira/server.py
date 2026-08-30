@@ -78,7 +78,7 @@ def _push_whatsapp(to: str, text: str):
             logger.error("[WHATSAPP] Failed to send chunk %d | error=%s", i + 1, e)
 
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService, InMemorySessionService
 from google.genai import types as genai_types
 from google import genai
 
@@ -184,7 +184,19 @@ _adk_plugins = _setup_tracing()
 # ── ADK runner setup ──────────────────────────────────────────────
 
 APP_NAME = "kira"
-session_service = InMemorySessionService()
+
+_database_url = os.environ.get("DATABASE_URL", "")
+if _database_url:
+    _sqlalchemy_url = _database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    db.run_migration_sync(_sqlalchemy_url)
+    session_service = DatabaseSessionService(
+        db_url=_sqlalchemy_url,
+        connect_args={"sslmode": "require"},
+    )
+    logger.info("[INIT] Using DatabaseSessionService for persistent sessions")
+else:
+    session_service = InMemorySessionService()
+    logger.info("[INIT] Using InMemorySessionService (no DATABASE_URL)")
 
 # Initialize from active block
 _active_config = block_manager.get_active_block()
@@ -234,7 +246,13 @@ _wa_sessions: dict[str, dict] = {}
 
 
 async def _get_wa_session(phone: str):
-    """Get or rotate an ADK session for a WhatsApp user."""
+    """Get or rotate an ADK session for a WhatsApp user.
+
+    After a container restart _wa_sessions is empty, so we check the DB
+    for the most recent wa_session and try to resume the persisted ADK
+    session.  This preserves conversation context (including tool-call
+    history) across restarts.
+    """
     now = time.time()
     entry = _wa_sessions.get(phone)
 
@@ -253,6 +271,34 @@ async def _get_wa_session(phone: str):
             return session, entry
 
     user_id = f"wa_{phone.replace('whatsapp:', '').replace('+', '')}"
+
+    if not entry and db.is_enabled():
+        db_session = await db.get_latest_session(phone)
+        if db_session:
+            last_active_ts = db_session["last_active"].timestamp()
+            idle_secs = now - last_active_ts
+            if idle_secs < SESSION_GAP_SECONDS:
+                old_sid = db_session["id"]
+                session = await session_service.get_session(
+                    app_name=APP_NAME, user_id=user_id, session_id=old_sid,
+                )
+                if session:
+                    logger.info("[SESSION] Resumed persisted session | phone=%s | session=%s | idle=%.0fs",
+                               phone, old_sid, idle_secs)
+                    await db.touch_session(old_sid)
+                    entry = {
+                        "session_id": old_sid,
+                        "user_id": user_id,
+                        "last_active": now,
+                        "status": "idle",
+                        "production_result": None,
+                        "is_new": False,
+                        "processing": False,
+                        "pending_reply": None,
+                    }
+                    _wa_sessions[phone] = entry
+                    return session, entry
+
     session = await session_service.create_session(
         app_name=APP_NAME, user_id=user_id,
     )
@@ -972,6 +1018,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
             if from_number:
                 summary = await _summarize_for_whatsapp(reply)
                 _push_whatsapp(from_number, summary)
+                await db.save_message(entry["session_id"], from_number, "assistant", summary)
             else:
                 entry["pending_reply"] = reply
         else:
@@ -1017,19 +1064,23 @@ async def whatsapp_webhook(request: Request):
                    body, normalized, is_casual)
         if is_casual:
             logger.info("[WA] Casual greeting — returning simple greeting, no agent call")
-            return _twiml(
+            greeting = (
                 "Hey! I'm Kira — your AI content strategist.\n\n"
                 "What would you like to do today? I can find trending "
                 "topics, create a video, or just chat."
             )
+            await db.save_message(entry["session_id"], from_number, "assistant", greeting)
+            return _twiml(greeting)
         logger.info("[WA] Non-casual new session — launching background agent")
         asyncio.create_task(
             _wa_background_send(entry, session, body, from_number=from_number)
         )
-        return _twiml(
+        ack = (
             "Hey! I'm Kira — your AI content strategist.\n\n"
             "Working on that now — I'll send you a reply in a few seconds!"
         )
+        await db.save_message(entry["session_id"], from_number, "assistant", ack)
+        return _twiml(ack)
 
     # ── Deliver a pending reply from a previous background run ───
     if entry.get("pending_reply"):
@@ -1185,6 +1236,7 @@ async def whatsapp_webhook(request: Request):
                 if from_number:
                     summary = await _summarize_for_whatsapp(reply)
                     _push_whatsapp(from_number, summary)
+                    await db.save_message(entry["session_id"], from_number, "assistant", summary)
                 else:
                     entry["pending_reply"] = reply
             await _flush_user_memory()
@@ -1212,6 +1264,7 @@ async def whatsapp_webhook(request: Request):
             "in a few minutes. I'll keep you posted on progress."
         )
 
+    await db.save_message(entry["session_id"], from_number, "assistant", reply)
     return _twiml(reply)
 
 
