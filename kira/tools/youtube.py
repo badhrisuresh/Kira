@@ -19,7 +19,10 @@ log = logging.getLogger(__name__)
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "token.pickle")
 
 _current_user_phone: str = ""
-_OWNER_WHATSAPP_NUMBER = os.environ.get("OWNER_WHATSAPP_NUMBER", "whatsapp:+919840733969")
+_OWNER_NUMBERS: set[str] = {
+    "whatsapp:+919840733969",
+    "whatsapp:+14132106772",
+}
 
 
 def configure(phone: str) -> None:
@@ -28,7 +31,7 @@ def configure(phone: str) -> None:
 
 
 def _is_owner() -> bool:
-    return not _current_user_phone or _current_user_phone == _OWNER_WHATSAPP_NUMBER
+    return not _current_user_phone or _current_user_phone in _OWNER_NUMBERS
 
 
 def _has_youtube_creds() -> bool:

@@ -260,14 +260,17 @@ _TOOL_TO_PHASE = {
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
 
 # ── Rate limits (non-owner WhatsApp users) ─────────────────────
-_OWNER_WHATSAPP_NUMBER = os.environ.get("OWNER_WHATSAPP_NUMBER", "whatsapp:+919840733969")
+_OWNER_NUMBERS: set[str] = {
+    "whatsapp:+919840733969",
+    "whatsapp:+14132106772",
+}
 _DAILY_VIDEO_LIMIT = 1
 _TOTAL_VIDEO_LIMIT = 3
 
 
 async def _check_rate_limit(phone: str) -> str | None:
     """Return a user-facing message if the phone is over its limit, else None."""
-    if not phone or phone == _OWNER_WHATSAPP_NUMBER:
+    if not phone or phone in _OWNER_NUMBERS:
         return None
     if not db.is_enabled():
         return None
@@ -1199,6 +1202,15 @@ async def whatsapp_webhook(request: Request):
     if entry.get("is_new"):
         entry["is_new"] = False
         logger.info("[WA] New session | phone=%s | body=%r", from_number, body[:80])
+
+        is_returning = False
+        if db.is_enabled():
+            existing_user = await db.get_user(from_number)
+            if existing_user:
+                is_returning = True
+                await _load_user_memory(from_number)
+        logger.info("[WA] User type | phone=%s | returning=%s", from_number, is_returning)
+
         _casual = {"hi", "hey", "hello", "yo", "sup", "what's up", "whats up",
                    "how are you", "hiya", "good morning", "good evening"}
         normalized = body.strip().lower().rstrip("!.?")
@@ -1206,22 +1218,35 @@ async def whatsapp_webhook(request: Request):
         logger.info("[WA] Greeting check | body=%r | normalized=%r | is_casual=%s",
                    body, normalized, is_casual)
         if is_casual:
-            logger.info("[WA] Casual greeting — returning simple greeting, no agent call")
-            greeting = (
-                "Hey! I'm Kira — your AI content strategist.\n\n"
-                "What would you like to do today? I can find trending "
-                "topics, create a video, or just chat."
-            )
+            logger.info("[WA] Casual greeting — returning greeting, no agent call")
+            if is_returning:
+                greeting = (
+                    "Welcome back! Ready to make another video?\n\n"
+                    "Just say \"let's go\" and I'll find what's trending right now."
+                )
+            else:
+                greeting = (
+                    "Hey! I'm Kira — I make YouTube Shorts about space "
+                    "and the cosmos, powered by AI.\n\n"
+                    "Just say \"let's make a video\" and I'll find what's "
+                    "trending, pitch you 3 topic ideas, and produce a "
+                    "finished Short in about 5 minutes. You just pick the topic!\n\n"
+                    "Ready when you are 🚀"
+                )
             await db.save_message(entry["session_id"], "assistant", greeting)
             return _twiml(greeting)
         logger.info("[WA] Non-casual new session — launching background agent")
         asyncio.create_task(
             _wa_background_send(entry, session, body, from_number=from_number)
         )
-        ack = (
-            "Hey! I'm Kira — your AI content strategist.\n\n"
-            "Working on that now — I'll send you a reply in a few seconds!"
-        )
+        if is_returning:
+            ack = "Welcome back! On it — give me a few seconds..."
+        else:
+            ack = (
+                "Hey! I'm Kira — I make YouTube Shorts about space, "
+                "powered by AI.\n\n"
+                "On it! Give me a few seconds..."
+            )
         await db.save_message(entry["session_id"], "assistant", ack)
         return _twiml(ack)
 
