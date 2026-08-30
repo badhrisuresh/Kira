@@ -20,6 +20,19 @@ _pool: Optional[asyncpg.Pool] = None
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
+_MIGRATION = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'sessions' AND column_name = 'user_phone'
+    ) THEN
+        ALTER TABLE sessions RENAME TO wa_sessions;
+    END IF;
+END
+$$;
+"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     phone       TEXT PRIMARY KEY,
@@ -28,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE IF NOT EXISTS wa_sessions (
     id          TEXT PRIMARY KEY,
     user_phone  TEXT NOT NULL REFERENCES users(phone),
     started_at  TIMESTAMPTZ DEFAULT NOW(),
@@ -37,7 +50,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS messages (
     id          SERIAL PRIMARY KEY,
-    session_id  TEXT NOT NULL REFERENCES sessions(id),
+    session_id  TEXT NOT NULL REFERENCES wa_sessions(id),
     user_phone  TEXT NOT NULL,
     role        TEXT NOT NULL,
     body        TEXT NOT NULL,
@@ -46,7 +59,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE TABLE IF NOT EXISTS productions (
     id           SERIAL PRIMARY KEY,
-    session_id   TEXT REFERENCES sessions(id),
+    session_id   TEXT REFERENCES wa_sessions(id),
     user_phone   TEXT NOT NULL REFERENCES users(phone),
     block_id     TEXT,
     topic        TEXT,
@@ -75,6 +88,21 @@ def is_enabled() -> bool:
     return bool(DATABASE_URL)
 
 
+def run_migration_sync(sqlalchemy_url: str) -> None:
+    """Run the sessions→wa_sessions migration synchronously.
+
+    Must be called BEFORE ADK's DatabaseSessionService is created, since
+    it calls create_all() and would collide with the old sessions table.
+    """
+    from sqlalchemy import create_engine, text
+    engine = create_engine(sqlalchemy_url, connect_args={"sslmode": "require"})
+    with engine.connect() as conn:
+        conn.execute(text(_MIGRATION))
+        conn.commit()
+    engine.dispose()
+    log.info("[DB] Synchronous migration complete (sessions → wa_sessions)")
+
+
 async def init() -> None:
     """Create the connection pool and run schema migration."""
     global _pool
@@ -98,6 +126,7 @@ async def init() -> None:
         statement_cache_size=0,  # Required for Supabase/pgbouncer transaction mode
     )
     async with _pool.acquire() as conn:
+        await conn.execute(_MIGRATION)
         await conn.execute(_SCHEMA)
     log.info("[DB] Connected and schema applied")
 
@@ -153,7 +182,7 @@ async def create_session(session_id: str, user_phone: str) -> None:
     if not _pool:
         return
     await _pool.execute(
-        "INSERT INTO sessions (id, user_phone) VALUES ($1, $2)",
+        "INSERT INTO wa_sessions (id, user_phone) VALUES ($1, $2)",
         session_id, user_phone,
     )
 
@@ -162,7 +191,7 @@ async def touch_session(session_id: str) -> None:
     if not _pool:
         return
     await _pool.execute(
-        "UPDATE sessions SET last_active = NOW() WHERE id = $1",
+        "UPDATE wa_sessions SET last_active = NOW() WHERE id = $1",
         session_id,
     )
 
@@ -171,7 +200,7 @@ async def get_latest_session(user_phone: str) -> Optional[asyncpg.Record]:
     if not _pool:
         return None
     return await _pool.fetchrow(
-        """SELECT * FROM sessions WHERE user_phone = $1
+        """SELECT * FROM wa_sessions WHERE user_phone = $1
            ORDER BY last_active DESC LIMIT 1""",
         user_phone,
     )
