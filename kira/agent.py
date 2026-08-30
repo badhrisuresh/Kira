@@ -3,6 +3,7 @@ import logging
 import os
 
 from google.adk.agents import LlmAgent
+from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,53 @@ from .tools.mux_voiceover import fit_and_mux_audio, mux_music_only
 from .tools.youtube import publish_video
 
 MODEL = "gemini-3.5-flash"
+
+_PRODUCTION_START_PHRASES = [
+    "making your video now",
+    "making your video",
+    "i'll send the link when it's done",
+    "you don't need to do anything",
+    "starting production now",
+    "i am making your video",
+]
+
+
+def _force_transfer_after_model(callback_context, llm_response):
+    """Intercept kira's response: if it signals production start but forgot
+    to call transfer_to_agent, inject the function call automatically.
+
+    Gemini-3.5-flash sometimes outputs the production-start text correctly
+    but omits the transfer_to_agent tool call, causing the execution agent
+    to never start."""
+    if not llm_response or not llm_response.content or not llm_response.content.parts:
+        return None
+
+    parts = llm_response.content.parts
+    has_production_signal = False
+    has_transfer = False
+
+    for p in parts:
+        if hasattr(p, "text") and p.text:
+            text_lower = p.text.lower()
+            if any(phrase in text_lower for phrase in _PRODUCTION_START_PHRASES):
+                has_production_signal = True
+        if hasattr(p, "function_call") and p.function_call:
+            if p.function_call.name == "transfer_to_agent":
+                has_transfer = True
+
+    if has_production_signal and not has_transfer:
+        log.info("[CALLBACK] Model signaled production start without transfer — injecting transfer_to_agent")
+        new_parts = list(parts) + [
+            types.Part(function_call=types.FunctionCall(
+                name="transfer_to_agent",
+                args={"agent_name": "execution_agent"},
+            ))
+        ]
+        return LlmResponse(
+            content=types.Content(role="model", parts=new_parts),
+        )
+
+    return None
 
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
@@ -198,6 +246,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         instruction=load_block_prompt("research_agent.md"),
         tools=root_tools,
         sub_agents=[execution_agent],
+        after_model_callback=_force_transfer_after_model,
     )
 
     log.info("[AGENTS] Agent tree built | root=%s | sub_agents=[execution_agent] "

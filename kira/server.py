@@ -259,6 +259,16 @@ _TOOL_TO_PHASE = {
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
 
+
+def _effective_tool_name(part) -> str:
+    """For transfer_to_agent calls, return the target agent name."""
+    name = part.function_call.name
+    if name == "transfer_to_agent" and part.function_call.args:
+        args = part.function_call.args
+        if isinstance(args, dict):
+            return args.get("agent_name", name)
+    return name
+
 # ── Rate limits (non-owner WhatsApp users) ─────────────────────
 _OWNER_NUMBERS: set[str] = {
     "whatsapp:+919840733969",
@@ -898,11 +908,12 @@ async def chat(request: Request):
 
                     if hasattr(part, "function_call") and part.function_call:
                         tool_name = part.function_call.name
-                        logger.info("[CHAT] Tool call | tool=%s | args=%s",
-                                   tool_name,
+                        effective_name = _effective_tool_name(part)
+                        logger.info("[CHAT] Tool call | tool=%s | effective=%s | args=%s",
+                                   tool_name, effective_name,
                                    str(part.function_call.args)[:200] if part.function_call.args else "")
 
-                        if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                        if (effective_name in _PRODUCTION_TOOLS or effective_name == "execution_agent") and not production_launched:
                             production_launched = True
                             _state["status"] = "producing"
                             _state["production_result"] = None
@@ -913,8 +924,8 @@ async def chat(request: Request):
                                 ))
                             reply_ready.set()
 
-                        if production_launched and tool_name in _TOOL_TO_PHASE:
-                            phase = _TOOL_TO_PHASE[tool_name]
+                        if production_launched and effective_name in _TOOL_TO_PHASE:
+                            phase = _TOOL_TO_PHASE[effective_name]
                             if phase in phase_order:
                                 phase_idx = phase_order.index(phase)
                                 for i in range(current_phase_idx, phase_idx):
@@ -1069,8 +1080,9 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     }
 
     _BG_PROGRESS_MESSAGES = {
-        "script_writer": "Writing the script...",
-        "production_planner": "Planning the shots...",
+        "execution_agent": "\U0001f680 Production started!",
+        "script_writer": "✍️ Writing the script...",
+        "production_planner": "\U0001f4cb Planning the shots...",
         "generate_image": "Generating visuals...",
         "generate_video": "Bringing visuals to life...",
         "concat_videos": "Assembling clips...",
@@ -1103,14 +1115,15 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
 
                 if hasattr(part, "function_call") and part.function_call:
                     tool_name = part.function_call.name
-                    logger.info("[WA_BG] Tool call | tool=%s", tool_name)
+                    effective_name = _effective_tool_name(part)
+                    logger.info("[WA_BG] Tool call | tool=%s | effective=%s", tool_name, effective_name)
 
                     if tool_name in _BG_RESEARCH_PROGRESS and tool_name not in progress_sent:
                         progress_sent.add(tool_name)
                         if from_number:
                             _push_whatsapp(from_number, _BG_RESEARCH_PROGRESS[tool_name])
 
-                    if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                    if (effective_name in _PRODUCTION_TOOLS or effective_name == "execution_agent") and not production_launched:
                         production_launched = True
                         entry["status"] = "producing"
                         logger.info("[WA_BG] Production launched | session=%s", session.id)
@@ -1122,11 +1135,11 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                             await db.save_message(entry["session_id"], "assistant", summary)
                             reply_sent = True
 
-                    if production_launched and tool_name in _BG_PROGRESS_MESSAGES:
-                        if tool_name not in progress_sent:
-                            progress_sent.add(tool_name)
+                    if production_launched and effective_name in _BG_PROGRESS_MESSAGES:
+                        if effective_name not in progress_sent:
+                            progress_sent.add(effective_name)
                             if from_number and _twilio_client:
-                                _push_whatsapp(from_number, _BG_PROGRESS_MESSAGES[tool_name])
+                                _push_whatsapp(from_number, _BG_PROGRESS_MESSAGES[effective_name])
 
                 if hasattr(part, "function_response") and part.function_response:
                     resp_name = part.function_response.name
@@ -1335,8 +1348,9 @@ async def whatsapp_webhook(request: Request):
     }
 
     _WA_PROGRESS_MESSAGES = {
-        "script_writer": "Writing the script...",
-        "production_planner": "Planning the shots...",
+        "execution_agent": "\U0001f680 Production started!",
+        "script_writer": "✍️ Writing the script...",
+        "production_planner": "\U0001f4cb Planning the shots...",
         "generate_image": "Generating visuals...",
         "generate_video": "Bringing visuals to life...",
         "concat_videos": "Assembling clips...",
@@ -1367,8 +1381,9 @@ async def whatsapp_webhook(request: Request):
 
                     if hasattr(part, "function_call") and part.function_call:
                         tool_name = part.function_call.name
-                        logger.info("[WA] Tool call | tool=%s | args=%s",
-                                   tool_name,
+                        effective_name = _effective_tool_name(part)
+                        logger.info("[WA] Tool call | tool=%s | effective=%s | args=%s",
+                                   tool_name, effective_name,
                                    str(part.function_call.args)[:200] if part.function_call.args else "")
 
                         if tool_name in _WA_RESEARCH_PROGRESS and tool_name not in _wa_progress_sent:
@@ -1376,22 +1391,19 @@ async def whatsapp_webhook(request: Request):
                             if from_number:
                                 _push_whatsapp(from_number, _WA_RESEARCH_PROGRESS[tool_name])
 
-                        if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                        if (effective_name in _PRODUCTION_TOOLS or effective_name == "execution_agent") and not production_launched:
                             production_launched = True
                             entry["status"] = "producing"
                             logger.info("[WA] Production launched | session=%s", session.id)
                             await db.create_production(entry["session_id"], _active_block_id)
                             reply_ready.set()
 
-                        if production_launched and tool_name in _WA_PROGRESS_MESSAGES:
-                            msg_key = tool_name
-                            if tool_name in ("generate_image", "generate_video"):
-                                msg_key = tool_name
-                            if msg_key not in _wa_progress_sent:
-                                _wa_progress_sent.add(msg_key)
-                                progress_msg = _WA_PROGRESS_MESSAGES[tool_name]
+                        if production_launched and effective_name in _WA_PROGRESS_MESSAGES:
+                            if effective_name not in _wa_progress_sent:
+                                _wa_progress_sent.add(effective_name)
+                                progress_msg = _WA_PROGRESS_MESSAGES[effective_name]
                                 logger.info("[WA] Sending progress | phase=%s | msg=%s",
-                                           tool_name, progress_msg)
+                                           effective_name, progress_msg)
                                 if from_number and _twilio_client:
                                     _push_whatsapp(from_number, progress_msg)
 
