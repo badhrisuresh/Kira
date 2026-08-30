@@ -36,6 +36,8 @@ $$;
 _POST_SCHEMA_MIGRATION = """
 ALTER TABLE messages ALTER COLUMN user_phone DROP NOT NULL;
 ALTER TABLE productions ALTER COLUMN user_phone DROP NOT NULL;
+UPDATE messages SET user_phone = NULL WHERE user_phone IS NOT NULL;
+UPDATE productions SET user_phone = NULL WHERE user_phone IS NOT NULL;
 """
 
 _SCHEMA = """
