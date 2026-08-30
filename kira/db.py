@@ -95,7 +95,7 @@ def run_migration_sync(sqlalchemy_url: str) -> None:
     it calls create_all() and would collide with the old sessions table.
     """
     from sqlalchemy import create_engine, text
-    engine = create_engine(sqlalchemy_url, connect_args={"sslmode": "require"})
+    engine = create_engine(sqlalchemy_url, connect_args={"sslmode": "require", "connect_timeout": 10})
     with engine.connect() as conn:
         conn.execute(text(_MIGRATION))
         conn.commit()
@@ -124,6 +124,7 @@ async def init() -> None:
         max_size=10,
         ssl="require",
         statement_cache_size=0,  # Required for Supabase/pgbouncer transaction mode
+        timeout=10,
     )
     async with _pool.acquire() as conn:
         await conn.execute(_MIGRATION)

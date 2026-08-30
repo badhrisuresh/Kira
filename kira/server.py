@@ -186,17 +186,29 @@ _adk_plugins = _setup_tracing()
 APP_NAME = "kira"
 
 _database_url = os.environ.get("DATABASE_URL", "")
+session_service = None
 if _database_url:
-    _sqlalchemy_url = _database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
-    db.run_migration_sync(_sqlalchemy_url)
-    session_service = DatabaseSessionService(
-        db_url=_sqlalchemy_url,
-        connect_args={"sslmode": "require"},
-    )
-    logger.info("[INIT] Using DatabaseSessionService for persistent sessions")
-else:
+    # Normalise URL: handle both postgres:// and postgresql:// schemes
+    _sa_url = _database_url
+    if _sa_url.startswith("postgres://"):
+        _sa_url = "postgresql://" + _sa_url[len("postgres://"):]
+    _sqlalchemy_url = _sa_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    try:
+        db.run_migration_sync(_sqlalchemy_url)
+        session_service = DatabaseSessionService(
+            db_url=_sqlalchemy_url,
+            connect_args={"sslmode": "require", "connect_timeout": 10},
+        )
+        logger.info("[INIT] Using DatabaseSessionService for persistent sessions")
+    except Exception as e:
+        logger.error("[INIT] DatabaseSessionService failed, falling back to in-memory: %s", e)
+        session_service = None
+if session_service is None:
     session_service = InMemorySessionService()
-    logger.info("[INIT] Using InMemorySessionService (no DATABASE_URL)")
+    if _database_url:
+        logger.warning("[INIT] Using InMemorySessionService (DB init failed)")
+    else:
+        logger.info("[INIT] Using InMemorySessionService (no DATABASE_URL)")
 
 # Initialize from active block
 _active_config = block_manager.get_active_block()
