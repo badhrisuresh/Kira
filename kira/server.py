@@ -78,7 +78,7 @@ def _push_whatsapp(to: str, text: str):
             logger.error("[WHATSAPP] Failed to send chunk %d | error=%s", i + 1, e)
 
 from google.adk.runners import Runner
-from google.adk.sessions import DatabaseSessionService, InMemorySessionService
+from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 from google import genai
 
@@ -194,6 +194,7 @@ if _database_url:
         _sa_url = "postgresql://" + _sa_url[len("postgres://"):]
     _sqlalchemy_url = _sa_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     try:
+        from google.adk.sessions import DatabaseSessionService
         db.run_migration_sync(_sqlalchemy_url)
         session_service = DatabaseSessionService(
             db_url=_sqlalchemy_url,
