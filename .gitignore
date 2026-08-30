@@ -23,3 +23,6 @@ venv/
 
 # Planning notes
 plan.md
+
+# Runtime memory
+memory.json

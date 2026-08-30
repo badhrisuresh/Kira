@@ -294,6 +294,31 @@ async def get_user_productions(
     )
 
 
+async def count_user_productions_today(user_phone: str) -> int:
+    if not _pool:
+        return 0
+    return await _pool.fetchval(
+        """SELECT COUNT(*) FROM productions p
+           JOIN wa_sessions s ON p.session_id = s.id
+           WHERE s.user_phone = $1
+             AND p.created_at >= NOW() - INTERVAL '24 hours'
+             AND p.status IN ('producing', 'done')""",
+        user_phone,
+    ) or 0
+
+
+async def count_user_productions_total(user_phone: str) -> int:
+    if not _pool:
+        return 0
+    return await _pool.fetchval(
+        """SELECT COUNT(*) FROM productions p
+           JOIN wa_sessions s ON p.session_id = s.id
+           WHERE s.user_phone = $1
+             AND p.status IN ('producing', 'done')""",
+        user_phone,
+    ) or 0
+
+
 # ── Production Assets ───────────────────────────────────────────
 
 async def save_asset(

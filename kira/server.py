@@ -259,6 +259,33 @@ _TOOL_TO_PHASE = {
 }
 _PRODUCTION_TOOLS = set(_TOOL_TO_PHASE) - {"write_memory"}
 
+# ── Rate limits (non-owner WhatsApp users) ─────────────────────
+_OWNER_WHATSAPP_NUMBER = os.environ.get("OWNER_WHATSAPP_NUMBER", "whatsapp:+919840733969")
+_DAILY_VIDEO_LIMIT = 1
+_TOTAL_VIDEO_LIMIT = 3
+
+
+async def _check_rate_limit(phone: str) -> str | None:
+    """Return a user-facing message if the phone is over its limit, else None."""
+    if not phone or phone == _OWNER_WHATSAPP_NUMBER:
+        return None
+    if not db.is_enabled():
+        return None
+    today = await db.count_user_productions_today(phone)
+    if today >= _DAILY_VIDEO_LIMIT:
+        return (
+            "You've already made a video today! "
+            "Come back tomorrow for another one."
+        )
+    total = await db.count_user_productions_total(phone)
+    if total >= _TOTAL_VIDEO_LIMIT:
+        return (
+            "You've used all 3 of your free videos. "
+            "Thanks for trying Kira!"
+        )
+    return None
+
+
 # ── WhatsApp per-user sessions ───────────────────────────────────
 
 SESSION_GAP_SECONDS = 2 * 3600  # 2 hours of silence → new session
@@ -1018,6 +1045,15 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                session.id, text[:80])
     await _load_user_memory(from_number)
     youtube_mod.configure(from_number)
+
+    limit_msg = await _check_rate_limit(from_number)
+    if limit_msg:
+        text = (
+            f"{text}\n\n[SYSTEM: This user has reached their video limit. "
+            f"Do NOT start production or transfer to execution_agent. "
+            f"Instead tell them: {limit_msg}]"
+        )
+
     t0 = time.time()
 
     _BG_RESEARCH_PROGRESS = {
@@ -1072,6 +1108,7 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                         production_launched = True
                         entry["status"] = "producing"
                         logger.info("[WA_BG] Production launched | session=%s", session.id)
+                        await db.create_production(entry["session_id"], _active_block_id)
                         if reply_parts and from_number and not reply_sent:
                             reply = "\n".join(reply_parts)
                             summary = await _summarize_for_whatsapp(reply)
@@ -1218,9 +1255,19 @@ async def whatsapp_webhook(request: Request):
                from_number, session.id, body[:80])
     await _load_user_memory(from_number)
     youtube_mod.configure(from_number)
+
+    limit_msg = await _check_rate_limit(from_number)
+    msg_text = body
+    if limit_msg:
+        msg_text = (
+            f"{body}\n\n[SYSTEM: This user has reached their video limit. "
+            f"Do NOT start production or transfer to execution_agent. "
+            f"Instead tell them: {limit_msg}]"
+        )
+
     content = genai_types.Content(
         role="user",
-        parts=[genai_types.Part(text=body)],
+        parts=[genai_types.Part(text=msg_text)],
     )
 
     reply_parts: list[str] = []
@@ -1281,6 +1328,7 @@ async def whatsapp_webhook(request: Request):
                             production_launched = True
                             entry["status"] = "producing"
                             logger.info("[WA] Production launched | session=%s", session.id)
+                            await db.create_production(entry["session_id"], _active_block_id)
                             reply_ready.set()
 
                         if production_launched and tool_name in _WA_PROGRESS_MESSAGES:
