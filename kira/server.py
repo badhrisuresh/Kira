@@ -111,12 +111,19 @@ async def _summarize_for_whatsapp(text: str) -> str:
             contents=genai_types.Content(
                 role="user",
                 parts=[genai_types.Part(text=(
-                    "You are a WhatsApp message formatter. The following is a response "
-                    "from an AI content strategist called Kira. Summarize it for WhatsApp "
-                    "viewing — keep all the key information (topic names, descriptions, "
-                    "options to choose from, any URLs) but make it concise and readable "
-                    "on a phone screen. Use plain text, numbered lists, and line breaks. "
-                    "No markdown headers or bold. Keep under 1200 characters.\n\n"
+                    "You are a WhatsApp message formatter for an AI called Kira.\n\n"
+                    "Rules:\n"
+                    "1. Strip ALL production details — scripts, shot breakdowns, visual "
+                    "descriptions, voiceover text, style specs, camera directions. The "
+                    "user does not need to review those.\n"
+                    "2. Keep: topic names, reasons why they'll work, any URLs, and any "
+                    "questions or choices the user needs to answer.\n"
+                    "3. ALWAYS end with a clear action line — what should the user do "
+                    "next? Examples: 'Pick a number, or say more for different options.' "
+                    "or 'You don't need to do anything — I'll send the video when it's "
+                    "ready.' or 'Want me to look for different topics?'\n"
+                    "4. Use plain text, numbered lists, and line breaks. No markdown.\n"
+                    "5. Keep under 800 characters.\n\n"
                     f"Original message:\n{text}"
                 ))],
             ),
@@ -999,34 +1006,102 @@ async def chat(request: Request):
 
 async def _wa_background_send(entry: dict, session, text: str, from_number: str = ""):
     """Process a WhatsApp message in the background and push the reply
-    proactively via the Twilio REST API (no second user message needed)."""
+    proactively via the Twilio REST API (no second user message needed).
+
+    Filters out intermediate production text (scripts, shot plans) so
+    the user only sees: the conversational reply, progress updates, and
+    the final video link."""
     entry["processing"] = True
     logger.info("[WA_BG] Starting background processing | session=%s | text=%s",
                session.id, text[:80])
     await _load_user_memory(from_number)
     t0 = time.time()
+
+    _BG_PROGRESS_MESSAGES = {
+        "script_writer": "Writing the script...",
+        "production_planner": "Planning the shots...",
+        "generate_image": "Generating visuals...",
+        "generate_video": "Bringing visuals to life...",
+        "concat_videos": "Assembling clips...",
+        "generate_voiceover": "Recording voiceover...",
+        "generate_background_music": "Composing music...",
+        "fit_and_mux_audio": "Mixing audio and adding captions...",
+        "mux_music_only": "Adding music...",
+        "publish_video": "Almost done! Publishing...",
+    }
+
     try:
         content = genai_types.Content(
             role="user", parts=[genai_types.Part(text=text)],
         )
-        parts: list[str] = []
+        reply_parts: list[str] = []
+        production_launched = False
+        reply_sent = False
+        progress_sent: set[str] = set()
+
         async for event in runner.run_async(
             user_id=entry["user_id"],
             session_id=session.id,
             new_message=content,
         ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        parts.append(part.text)
-                    if hasattr(part, "function_call") and part.function_call:
-                        logger.info("[WA_BG] Tool call | tool=%s", part.function_call.name)
-                    if hasattr(part, "function_response") and part.function_response:
-                        logger.info("[WA_BG] Tool result | tool=%s | result=%s",
-                                   part.function_response.name,
-                                   str(part.function_response.response)[:150])
-        if parts:
-            reply = "\n".join(parts)
+            if not event.content or not event.content.parts:
+                continue
+            for part in event.content.parts:
+                if part.text and not production_launched:
+                    reply_parts.append(part.text)
+
+                if hasattr(part, "function_call") and part.function_call:
+                    tool_name = part.function_call.name
+                    logger.info("[WA_BG] Tool call | tool=%s", tool_name)
+
+                    if tool_name in _PRODUCTION_TOOLS and not production_launched:
+                        production_launched = True
+                        entry["status"] = "producing"
+                        logger.info("[WA_BG] Production launched | session=%s", session.id)
+                        if reply_parts and from_number and not reply_sent:
+                            reply = "\n".join(reply_parts)
+                            summary = await _summarize_for_whatsapp(reply)
+                            _push_whatsapp(from_number, summary)
+                            await db.save_message(entry["session_id"], from_number, "assistant", summary)
+                            reply_sent = True
+
+                    if production_launched and tool_name in _BG_PROGRESS_MESSAGES:
+                        if tool_name not in progress_sent:
+                            progress_sent.add(tool_name)
+                            if from_number and _twilio_client:
+                                _push_whatsapp(from_number, _BG_PROGRESS_MESSAGES[tool_name])
+
+                if hasattr(part, "function_response") and part.function_response:
+                    resp_name = part.function_response.name
+                    logger.info("[WA_BG] Tool result | tool=%s | result=%s",
+                               resp_name,
+                               str(part.function_response.response)[:150])
+                    if production_launched and resp_name == "publish_video":
+                        resp = part.function_response.response
+                        if isinstance(resp, dict):
+                            entry["production_result"] = {
+                                "youtube_url": resp.get("youtube_url", ""),
+                                "gcs_url": resp.get("gcs_url", ""),
+                                "video_id": resp.get("video_id", ""),
+                            }
+
+        if production_launched:
+            entry["status"] = "done"
+            logger.info("[WA_BG] Production complete | elapsed=%.1fs | result=%s",
+                       time.time() - t0, entry.get("production_result"))
+            if entry.get("production_result") and from_number:
+                result = entry["production_result"]
+                url = result.get("youtube_url") or result.get("gcs_url", "")
+                msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
+                _push_whatsapp(from_number, msg)
+                await db.save_message(entry["session_id"], from_number, "assistant", msg)
+                entry["production_result"] = None
+            elif not entry.get("production_result") and from_number:
+                _push_whatsapp(from_number,
+                              "Production finished but something went wrong — "
+                              "I couldn't find the video link.")
+        elif reply_parts and not reply_sent:
+            reply = "\n".join(reply_parts)
             logger.info("[WA_BG] Agent replied | len=%d | elapsed=%.1fs", len(reply), time.time() - t0)
             if from_number:
                 summary = await _summarize_for_whatsapp(reply)
@@ -1034,11 +1109,15 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 await db.save_message(entry["session_id"], from_number, "assistant", summary)
             else:
                 entry["pending_reply"] = reply
-        else:
+        elif not reply_parts:
             logger.warning("[WA_BG] No reply from agent | elapsed=%.1fs", time.time() - t0)
     except Exception as e:
         logger.error("[WA_BG] Failed | error=%s | elapsed=%.1fs\n%s",
                     e, time.time() - t0, traceback.format_exc())
+        if production_launched and from_number:
+            _push_whatsapp(from_number,
+                          f"Something went wrong during production: {str(e)[:200]}")
+            entry["status"] = "idle"
     finally:
         await _flush_user_memory()
         entry["processing"] = False
