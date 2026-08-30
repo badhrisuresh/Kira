@@ -1008,15 +1008,21 @@ async def whatsapp_webhook(request: Request):
     # ── Brand-new session → instant greeting, process in background ──
     if entry.get("is_new"):
         entry["is_new"] = False
-        logger.info("[WA] New session | phone=%s | body=%s", from_number, body[:80])
+        logger.info("[WA] New session | phone=%s | body=%r", from_number, body[:80])
         _casual = {"hi", "hey", "hello", "yo", "sup", "what's up", "whats up",
                    "how are you", "hiya", "good morning", "good evening"}
-        if body.strip().lower().rstrip("!.?") in _casual:
+        normalized = body.strip().lower().rstrip("!.?")
+        is_casual = normalized in _casual
+        logger.info("[WA] Greeting check | body=%r | normalized=%r | is_casual=%s",
+                   body, normalized, is_casual)
+        if is_casual:
+            logger.info("[WA] Casual greeting — returning simple greeting, no agent call")
             return _twiml(
                 "Hey! I'm Kira — your AI content strategist.\n\n"
                 "What would you like to do today? I can find trending "
                 "topics, create a video, or just chat."
             )
+        logger.info("[WA] Non-casual new session — launching background agent")
         asyncio.create_task(
             _wa_background_send(entry, session, body, from_number=from_number)
         )
