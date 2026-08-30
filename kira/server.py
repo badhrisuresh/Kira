@@ -102,7 +102,7 @@ async def _summarize_for_whatsapp(text: str) -> str:
 
     Keeps the original meaning but fits within WhatsApp's readability
     constraints (~1200 chars). Returns the original if it's already short."""
-    if len(text) <= 1200:
+    if len(text) <= 600:
         return text
     logger.info("[SUMMARIZE] Summarizing response for WhatsApp | original_len=%d", len(text))
     t0 = time.time()
@@ -346,6 +346,7 @@ async def _get_wa_session(phone: str):
                         "is_new": False,
                         "processing": False,
                         "pending_reply": None,
+                        "last_production_outcome": None,
                     }
                     _wa_sessions[phone] = entry
                     return session, entry
@@ -368,6 +369,7 @@ async def _get_wa_session(phone: str):
         "is_new": True,
         "processing": False,
         "pending_reply": None,
+        "last_production_outcome": None,
     }
     _wa_sessions[phone] = entry
     return session, entry
@@ -397,7 +399,8 @@ def _format_for_whatsapp(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = text.strip()
     if len(text) > 1500:
-        text = text[:1497] + "..."
+        cut = text[:1497].rsplit('\n', 1)[0] or text[:1497].rsplit('. ', 1)[0]
+        text = cut.rstrip() + "..."
     return text
 
 
@@ -1149,11 +1152,13 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
                 msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                 _push_whatsapp(from_number, msg)
                 await db.save_message(entry["session_id"], "assistant", msg)
+                entry["last_production_outcome"] = {"status": "success", "url": url, "time": time.time()}
                 entry["production_result"] = None
             elif not entry.get("production_result") and from_number:
+                entry["last_production_outcome"] = {"status": "failed", "reason": "no video link", "time": time.time()}
                 _push_whatsapp(from_number,
-                              "Production finished but something went wrong — "
-                              "I couldn't find the video link.")
+                              "Something went wrong — I couldn't produce the video. "
+                              "Want me to try again?")
         elif reply_parts and not reply_sent:
             reply = "\n".join(reply_parts)
             logger.info("[WA_BG] Agent replied | len=%d | elapsed=%.1fs", len(reply), time.time() - t0)
@@ -1168,10 +1173,12 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
     except Exception as e:
         logger.error("[WA_BG] Failed | error=%s | elapsed=%.1fs\n%s",
                     e, time.time() - t0, traceback.format_exc())
-        if production_launched and from_number:
+        entry["status"] = "idle"
+        entry["last_production_outcome"] = {"status": "error", "reason": str(e)[:200], "time": time.time()}
+        if from_number:
             _push_whatsapp(from_number,
-                          f"Something went wrong during production: {str(e)[:200]}")
-            entry["status"] = "idle"
+                          "Something went wrong — I couldn't produce the video. "
+                          "Want me to try again?")
     finally:
         await _flush_user_memory()
         entry["processing"] = False
@@ -1272,10 +1279,29 @@ async def whatsapp_webhook(request: Request):
     # ── If production is still running ───────────────────────
     if entry["status"] == "producing":
         return _twiml(
-            "Still working on it — I'll message you as soon as I'm done"
+            "Still working on your video — I'll send it as soon as it's ready!"
         )
 
+    # ── Recent production outcome (user asking about what happened) ──
+    outcome = entry.get("last_production_outcome")
+    if outcome and (time.time() - outcome.get("time", 0)) < 600:
+        if outcome["status"] == "success":
+            url = outcome.get("url", "")
+            entry["last_production_outcome"] = None
+            entry["status"] = "idle"
+            if url:
+                return _twiml(f"Your video was already sent! Here it is again:\n{url}")
+            # fall through to agent for other questions
+        elif outcome["status"] in ("failed", "error"):
+            entry["last_production_outcome"] = None
+            entry["status"] = "idle"
+            return _twiml(
+                "The last video didn't make it — something went wrong during production. "
+                "Want me to try again with a new topic?"
+            )
+
     # ── Normal conversational flow ───────────────────────────
+    entry["status"] = "idle"
     logger.info("[WA] Normal flow | phone=%s | session=%s | body=%s",
                from_number, session.id, body[:80])
     await _load_user_memory(from_number)
@@ -1323,6 +1349,7 @@ async def whatsapp_webhook(request: Request):
 
     async def _process():
         nonlocal production_launched
+        entry["processing"] = True
         t0 = time.time()
         try:
             async for event in runner.run_async(
@@ -1405,23 +1432,27 @@ async def whatsapp_webhook(request: Request):
                     msg = f"Your video is ready!\n{url}" if url else "Video production is complete!"
                     _push_whatsapp(from_number, msg)
                     await db.save_message(entry["session_id"], "assistant", msg)
+                    entry["last_production_outcome"] = {"status": "success", "url": url, "time": time.time()}
                     entry["production_result"] = None
                 elif not entry.get("production_result"):
                     logger.error("[WA] Production finished but no video link found!")
+                    entry["last_production_outcome"] = {"status": "failed", "reason": "no video link", "time": time.time()}
                     if from_number:
                         _push_whatsapp(from_number,
-                                      "Production finished but something went wrong — "
-                                      "I couldn't find the video link. Check the logs.")
+                                      "Something went wrong — I couldn't produce the video. "
+                                      "Want me to try again?")
 
         except Exception as e:
             logger.error("[WA] Processing failed | error=%s | elapsed=%.1fs\n%s",
                         e, time.time() - t0, traceback.format_exc())
             entry["status"] = "idle"
-            if production_launched and from_number:
+            entry["last_production_outcome"] = {"status": "error", "reason": str(e)[:200], "time": time.time()}
+            if from_number:
                 _push_whatsapp(from_number,
-                              f"Something went wrong during production: {str(e)[:200]}")
+                              "Something went wrong — I couldn't produce the video. "
+                              "Want me to try again?")
         finally:
-            if timed_out and reply_parts and not production_launched:
+            if timed_out and reply_parts:
                 reply = "\n".join(reply_parts)
                 logger.info("[WA] Delivering timed-out reply | len=%d", len(reply))
                 if from_number:
@@ -1430,6 +1461,7 @@ async def whatsapp_webhook(request: Request):
                     await db.save_message(entry["session_id"], "assistant", summary)
                 else:
                     entry["pending_reply"] = reply
+            entry["processing"] = False
             await _flush_user_memory()
             if not reply_ready.is_set():
                 reply_ready.set()
@@ -1455,6 +1487,7 @@ async def whatsapp_webhook(request: Request):
             "in a few minutes. I'll keep you posted on progress."
         )
 
+    reply = await _summarize_for_whatsapp(reply)
     await db.save_message(entry["session_id"], "assistant", reply)
     return _twiml(reply)
 
