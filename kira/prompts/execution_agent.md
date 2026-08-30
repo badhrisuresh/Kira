@@ -7,14 +7,15 @@ agent. Extract the topic, hook fact, trending reason, and source.
 
 ## PHASE 1 — SCRIPT
 
-Call **script_writer()** with the full creative brief.
+Call **write_script()** with the full creative brief (topic, hook fact,
+trending reason, source — extract these from the conversation history).
 
 It returns a production-ready script with beats, narration, visuals,
 audio design, title, and description. Review it and proceed.
 
 ## PHASE 2 — PRODUCTION PLAN
 
-Call **production_planner()** with the complete script from Phase 1.
+Call **plan_production()** with the complete script from Phase 1.
 
 It returns a shot-by-shot breakdown: how many shots (2-4), each shot's
 duration (5-10 seconds), starting image prompts, video prompts,
