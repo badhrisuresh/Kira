@@ -31,11 +31,8 @@ Duration: [3-10] seconds
 Beats covered: HOOK + CONTEXT (0:00 – 0:06)
 Narration: "[exact words for this shot]"
 
-  Reference Image 1:
-    Prompt: "[full image-gen prompt]"
-
-  Reference Image 2 (if needed):
-    Prompt: "[full image-gen prompt]"
+  Starting Image:
+    Prompt: "[full image-gen prompt — this becomes the first frame]"
 
   Video Prompt: "[full video-gen prompt]"
 
@@ -53,7 +50,7 @@ SHOT 2 of N
 
 ### Shot Duration Strategy
 
-Gemini Omni Flash generates clips of **3–10 seconds** (integer). Shots
+Gemini Omni Flash generates clips of **5–10 seconds** (integer). Shots
 must sum to 15-20 seconds total.
 
 Proven structures:
@@ -61,18 +58,18 @@ Proven structures:
 | Pattern         | Feel                          |
 |-----------------|-------------------------------|
 | 6 + 6 + 8 = 20 | Balanced, versatile           |
-| 4 + 8 + 8 = 20 | Quick hook, long development  |
+| 5 + 8 + 7 = 20 | Quick hook, long development  |
 | 8 + 8 = 16     | Simple, high-impact           |
-| 8 + 4 + 8 = 20 | Breath in the middle          |
-| 4 + 4 + 6 + 6 = 20 | Fast-paced, dynamic       |
+| 10 + 10 = 20   | Two-act, cinematic            |
+| 5 + 5 + 5 + 5 = 20 | Fast-paced, dynamic       |
 | 6 + 8 + 6 = 20 | Slow build, quick close       |
 
 How to choose:
-- Hook demands a quick cut? Start with 4 s.
+- Hook demands a quick cut? Start with 5 s.
 - Payoff needs room to breathe? Give it 8–10 s.
 - Multiple distinct locations? More shots (3-4).
 - Single continuous scene? Fewer shots (2).
-- Emotional build? Short-to-long progression (4 → 6 → 8).
+- Emotional build? Short-to-long progression (5 → 7 → 8).
 
 ### Voiceover Timing (TTS)
 
@@ -101,9 +98,9 @@ Rules:
 
 ### Writing Reference Image Prompts
 
-Each shot gets 1-2 reference images that anchor the video model's visual
-understanding. These images are the single biggest lever on output
-quality.
+Each shot gets ONE starting image that the video model animates from.
+This image is the first frame of the clip and the single biggest lever
+on output quality.
 
 **Prompt template (include ALL parts):**
 
@@ -240,7 +237,7 @@ is the hardest part and the most important.
 Before returning your shot list, verify every item:
 
 - [ ] Total duration is 15-20 seconds
-- [ ] Each shot is an integer between 3 and 10 seconds
+- [ ] Each shot is an integer between 5 and 10 seconds
 - [ ] Every image prompt has: subject, composition, lighting, colour,
       style, "9:16 vertical", "no text overlay"
 - [ ] Style keywords are IDENTICAL across all image prompts

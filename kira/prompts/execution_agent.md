@@ -17,7 +17,7 @@ audio design, title, and description. Review it and proceed.
 Call **production_planner()** with the complete script from Phase 1.
 
 It returns a shot-by-shot breakdown: how many shots (2-4), each shot's
-duration (3-10 seconds), reference image prompts, video prompts,
+duration (5-10 seconds), starting image prompts, video prompts,
 continuity notes, and a single VOICEOVER PROMPT sized for the total
 duration. Review it and proceed.
 
@@ -31,14 +31,14 @@ generate_video() prompts. Video clip audio is discarded in post.
 
 For **each shot** in the production plan, in order:
 
-1. Call generate_image() for each reference image prompt in that shot.
-   Use the EXACT prompt from the production plan. Collect all returned
-   image URLs.
+1. Call generate_image() for the starting image prompt for this shot.
+   Use the EXACT prompt from the production plan. This image is the
+   first frame the video will animate from.
 
 2. Call generate_video() with:
-   - image_urls: the reference image URLs for this shot
+   - image_url: the starting image URL for this shot
    - prompt: the cleaned video prompt (motion + visuals only)
-   - duration: the shot's duration as an integer (3-10 seconds)
+   - duration: the shot's duration as an integer (5-10 seconds)
 
 3. Collect the returned video URL.
 
