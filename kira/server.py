@@ -245,8 +245,8 @@ _state = {
 # ── Tool-to-phase mapping (shared by /api/approve and /api/chat) ─
 
 _TOOL_TO_PHASE = {
-    "script_writer": "script",
-    "production_planner": "plan",
+    "write_script": "script",
+    "plan_production": "plan",
     "generate_image": "image_gen",
     "generate_video": "video_gen",
     "concat_videos": "concat",
@@ -1081,8 +1081,8 @@ async def _wa_background_send(entry: dict, session, text: str, from_number: str 
 
     _BG_PROGRESS_MESSAGES = {
         "execution_agent": "\U0001f680 Production started!",
-        "script_writer": "✍️ Writing the script...",
-        "production_planner": "\U0001f4cb Planning the shots...",
+        "write_script": "✍️ Writing the script...",
+        "plan_production": "\U0001f4cb Planning the shots...",
         "generate_image": "Generating visuals...",
         "generate_video": "Bringing visuals to life...",
         "concat_videos": "Assembling clips...",
@@ -1349,8 +1349,8 @@ async def whatsapp_webhook(request: Request):
 
     _WA_PROGRESS_MESSAGES = {
         "execution_agent": "\U0001f680 Production started!",
-        "script_writer": "✍️ Writing the script...",
-        "production_planner": "\U0001f4cb Planning the shots...",
+        "write_script": "✍️ Writing the script...",
+        "plan_production": "\U0001f4cb Planning the shots...",
         "generate_image": "Generating visuals...",
         "generate_video": "Bringing visuals to life...",
         "concat_videos": "Assembling clips...",

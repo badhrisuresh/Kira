@@ -4,6 +4,7 @@ import os
 
 from google.adk.agents import LlmAgent
 from google.adk.models.llm_response import LlmResponse
+from google import genai
 from google.genai import types
 
 log = logging.getLogger(__name__)
@@ -167,40 +168,51 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
 
     narration_enabled = block_config.get("narration_enabled", True)
 
-    # ── Script Writer sub-agent ──────────────────────────────
-    script_writer_agent = LlmAgent(
-        name="script_writer",
-        model=MODEL,
+    # ── Script Writer & Production Planner as tool functions ──
+    # These were previously sub-agents, but transfer_to_agent is a
+    # one-way handoff in ADK — the execution_agent never resumes
+    # after the sub-agent finishes.  By making them tool functions
+    # that call the LLM internally, execution_agent stays in control.
+    _script_prompt = load_block_prompt("script_writer.md")
+    _planner_prompt = load_block_prompt("production_breakdown.md")
+    _llm_client = genai.Client()
 
-        description=(
-            "Expert short-form video scriptwriter. Takes a creative brief "
-            "and returns a complete production-ready script with beat-by-beat "
-            "visuals, audio design, title, and description."
-            + (" Includes narration text for each beat." if narration_enabled
-               else " Visual-only — no narration lines.")
-            + " Call this FIRST before production planning."
-        ),
-        instruction=load_block_prompt("script_writer.md"),
-    )
+    def write_script(creative_brief: str) -> str:
+        """Write a production-ready script for a YouTube Short.
+        Takes the full creative brief (topic, hook fact, trending reason,
+        source) and returns a complete script with beats, narration,
+        visuals, and audio design. Call this FIRST."""
+        log.info("[TOOL] write_script | brief_len=%d", len(creative_brief))
+        resp = _llm_client.models.generate_content(
+            model=MODEL,
+            contents=creative_brief,
+            config=types.GenerateContentConfig(
+                system_instruction=_script_prompt,
+            ),
+        )
+        log.info("[TOOL] write_script complete | result_len=%d", len(resp.text))
+        return resp.text
 
-    # ── Production Planner sub-agent ─────────────────────────
-    production_planner_agent = LlmAgent(
-        name="production_planner",
-        model=MODEL,
-
-        description=(
-            "Video production planner. Takes a finished script and breaks it "
-            "into a shot-by-shot production spec: number of shots (2-4), "
-            "each shot's duration, starting image prompts, video generation "
-            "prompts, and continuity notes."
-            + (" Includes a single timed VOICEOVER PROMPT for TTS." if narration_enabled else "")
-            + " Call this AFTER script_writer returns the script."
-        ),
-        instruction=load_block_prompt("production_breakdown.md"),
-    )
+    def plan_production(script: str) -> str:
+        """Plan the shot-by-shot production breakdown for a finished script.
+        Returns number of shots (2-4), each shot's duration, starting
+        image prompts, video prompts, continuity notes, and a single
+        VOICEOVER PROMPT for TTS. Call AFTER write_script."""
+        log.info("[TOOL] plan_production | script_len=%d", len(script))
+        resp = _llm_client.models.generate_content(
+            model=MODEL,
+            contents=script,
+            config=types.GenerateContentConfig(
+                system_instruction=_planner_prompt,
+            ),
+        )
+        log.info("[TOOL] plan_production complete | result_len=%d", len(resp.text))
+        return resp.text
 
     # ── Execution agent tools ────────────────────────────────
     exec_tools = [
+        write_script,
+        plan_production,
         generate_image,
         generate_video,
         concat_videos,
@@ -209,7 +221,7 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         write_memory,
     ]
     if narration_enabled:
-        exec_tools.insert(3, generate_voiceover)
+        exec_tools.insert(5, generate_voiceover)
         exec_tools.append(fit_and_mux_audio)
     else:
         exec_tools.append(mux_music_only)
@@ -232,7 +244,6 @@ def build_agents(block_config: dict, block_path: str) -> LlmAgent:
         ),
         instruction=execution_prompt,
         tools=exec_tools,
-        sub_agents=[script_writer_agent, production_planner_agent],
     )
 
     # ── Root agent tools ─────────────────────────────────────
