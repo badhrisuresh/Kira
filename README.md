@@ -2,7 +2,11 @@
 
 Autonomous AI video content generator that works via WhatsApp. Kira researches trending topics, writes scripts, generates AI images and video, produces voiceovers, composes background music, and publishes the final video — all from a single chat message.
 
-Built with Google ADK (Gemini), Fal.ai, FFmpeg, and Twilio.
+Built with **Google ADK (Gemini 3.5 Flash)**, **Fal.ai**, **FFmpeg**, and **Twilio**, deployed on **Google Cloud Run**.
+
+**Hackathon track: The Taskmaster** — Kira takes a single user intent, plans a multi-step video production pipeline, and completes the entire workflow autonomously with a human approval gate between planning and execution.
+
+---
 
 ## Try it on WhatsApp
 
@@ -12,7 +16,68 @@ Scan the QR code to chat with Kira directly on WhatsApp:
   <img src="qr.png" alt="Chat with Kira on WhatsApp" width="250" />
 </p>
 
-## How it works
+---
+
+## Features
+
+- WhatsApp (or web simulator) as the UI — no app to install
+- Planning agent researches trending topics and drafts a creative brief
+- Human-in-the-loop approval before any media is generated
+- Execution agent runs image generation, video generation, voiceover, background music, caption burn-in, and YouTube upload in sequence
+- Per-user persistent memory — Kira remembers standing instructions ("no temple content", "more engineering") and past topics across sessions
+- Degrades gracefully — works without Postgres, GCS, or Twilio
+
+---
+
+## System Architecture
+
+### Overall System
+
+![Overall System Design](assets/overall_system_design.png)
+
+### Agent Pipeline
+
+![Agent System Diagram](assets/agent_system_diagram.png)
+
+```
+WhatsApp (Twilio) ──> FastAPI server ──> Google ADK (Gemini 3.5 Flash)
+                                              │
+                    ┌─────────────────────────┤
+                    ▼                         ▼
+              Planning Agent           Execution Agent
+              (research, brief)        (image, video, TTS, music, mux, publish)
+                                              │
+                    ┌────────────┬─────────────┼──────────────┐
+                    ▼            ▼             ▼              ▼
+                 Fal.ai       FFmpeg     Google Cloud      YouTube
+              (image/video/   (concat,    Storage         (optional
+               TTS/music)    captions)   (public URLs)     upload)
+```
+
+**Storage layers:**
+- **Postgres** (Supabase / Cloud SQL) — users, sessions, messages, productions, per-user memory (JSONB)
+- **Google Cloud Storage** — generated images, per-shot video clips, final videos
+- **YouTube** — optional final video upload for the channel owner
+
+---
+
+## Technologies Used
+
+| Layer | Technology |
+|---|---|
+| LLM | Gemini 3.5 Flash (via Google AI API) |
+| Agent framework | Google ADK (Agent Development Kit) |
+| Compute | Google Cloud Run |
+| Object storage | Google Cloud Storage |
+| Database | Supabase (Postgres) / Cloud SQL |
+| Media generation | Fal.ai (Flux image, video, TTS, Lyria music) |
+| Media processing | FFmpeg |
+| Messaging | Twilio WhatsApp API |
+| Web server | FastAPI + Uvicorn |
+
+---
+
+## How It Works
 
 1. You send a WhatsApp message (or use the web simulator)
 2. Kira's planning agent researches trends, picks a topic, and drafts a creative brief
@@ -20,7 +85,9 @@ Scan the QR code to chat with Kira directly on WhatsApp:
 4. The execution agent runs a multi-step pipeline: image generation, video generation, voiceover, music, caption burn-in, and publishing
 5. You get back a link to the finished YouTube Short (or a public GCS URL)
 
-Each user gets their own memory — Kira remembers past topics, standing instructions ("no temple content", "more engineering"), and one-time requests.
+Messages within a 2-hour window belong to the same session. After 2 hours of silence, the next message starts a fresh session.
+
+---
 
 ## Setup
 
@@ -117,7 +184,7 @@ Only needed if you want Kira to upload directly to YouTube. Without this, videos
    python setup_oauth.py
    ```
 
-### Run
+### Run Locally
 
 ```bash
 uvicorn kira.server:app --reload --port 8080
@@ -138,33 +205,31 @@ Open `http://localhost:8080` for the web simulator.
    https://<your-ngrok-url>/whatsapp
    ```
 
-Messages within a 2-hour window belong to the same session. After 2 hours of silence, the next message starts a fresh session.
-
-### Docker (optional)
+### Docker
 
 ```bash
 docker build -t kira .
 docker run -p 8080:8080 --env-file kira/.env kira
 ```
 
-## Architecture
+### Deploy to Google Cloud Run
 
-```
-WhatsApp (Twilio) ──> FastAPI server ──> Google ADK (Gemini 3.5 Flash)
-                                              │
-                    ┌─────────────────────────┤
-                    ▼                         ▼
-              Planning Agent           Execution Agent
-              (research, brief)        (image, video, TTS, music, mux, publish)
-                                              │
-                    ┌────────────┬─────────────┼──────────────┐
-                    ▼            ▼             ▼              ▼
-                 Fal.ai       FFmpeg     Google Cloud      YouTube
-              (image/video/   (concat,    Storage         (optional
-               TTS/music)    captions)   (public URLs)     upload)
+```bash
+gcloud run deploy kira \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars GOOGLE_API_KEY=<key>,FAL_KEY=<key>,GCS_BUCKET_NAME=<bucket>
 ```
 
-**Storage layers:**
-- **Postgres** (Supabase) — users, sessions, messages, productions, per-user memory (JSONB)
-- **Google Cloud Storage** — generated images, per-shot video clips, final videos
-- **YouTube** — optional final video upload for the channel owner
+Set remaining secrets (DATABASE_URL, Twilio) via `--set-env-vars` or Cloud Run's Secret Manager integration.
+
+---
+
+## Findings & Learnings
+
+- **ADK's session model** maps cleanly onto WhatsApp's 24-hour messaging window — each conversation is a session, and the 2-hour inactivity cutoff mirrors natural chat behavior.
+- **Async pipeline coordination** between the planning agent and execution agent requires careful state handoff; we thread a `production_id` through both agents so progress can be resumed after disconnects.
+- **Fal.ai queue-based generation** (image, video, TTS, music) means each step is independently retryable without restarting the whole pipeline.
+- **FFmpeg for caption burn-in** proved more reliable than cloud-based subtitle services for short-form vertical video at 9:16 aspect ratio.
+- **Gemini 3.5 Flash** struck the right balance between reasoning quality and latency for the planning agent — the full brief generation (research + script + shot list) completes in under 10 seconds.
