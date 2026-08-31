@@ -16,6 +16,7 @@ venv/
 # Local test artifacts
 /tmp/
 *.mp4
+!assets/*.mp4
 
 # ADK local runtime state
 .adk/

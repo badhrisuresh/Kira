@@ -226,6 +226,111 @@ Set remaining secrets (DATABASE_URL, Twilio) via `--set-env-vars` or Cloud Run's
 
 ---
 
+## Reproducible Testing
+
+Kira relies on external AI services (Gemini, Fal.ai) and media tools (FFmpeg), so end-to-end runs are non-deterministic. Use the steps below to verify each layer independently.
+
+### Sample assets
+
+The `assets/` folder contains pre-generated sample files you can use to test individual pipeline stages without calling external APIs:
+
+| File | Purpose |
+|------|---------|
+| `01_star_core_lightning.png/mp4` | Sample image + video for shot 1 |
+| `02_black_hole_reveal.png/mp4` | Sample image + video for shot 2 |
+| `03_accretion_disk_hero.png/mp4` | Sample image + video for shot 3 |
+| `narration_voiceover.mp3` | Pre-recorded voiceover |
+| `background_music.mp3` | Generated background track |
+| `narration_script.txt` | Script used to generate the voiceover |
+| `kira_agent_architecture_diagram.png` | Agent architecture diagram |
+| `overall_system_design.png` | System design overview |
+| `whatsapp_demo_*.png` | WhatsApp interaction screenshots |
+| `youtube_studio_*.png` | YouTube Studio dashboard screenshots |
+
+Use these to test FFmpeg concatenation, muxing, and caption burn-in without waiting for AI generation.
+
+### 1. Server health check
+
+Start the server and confirm the web simulator loads:
+
+```bash
+uvicorn kira.server:app --reload --port 8080
+```
+
+Open `http://localhost:8080` — you should see the chat UI. Send a simple message like "hi" and verify Kira responds without errors.
+
+### 2. Tool-level smoke tests
+
+Test individual tools in isolation by running them from a Python shell with your `.env` loaded:
+
+```bash
+python -c "
+from dotenv import load_dotenv; load_dotenv('kira/.env')
+from kira.tools.image_gen import generate_image
+result = generate_image(prompt='a sunset over mountains', aspect_ratio='9:16')
+print(result)
+"
+```
+
+Repeat for other tools (`generate_video`, `generate_voiceover`, `generate_background_music`) to confirm API keys are valid and each service returns a URL.
+
+### 3. FFmpeg pipeline
+
+Verify FFmpeg is installed and the media pipeline works:
+
+```bash
+ffmpeg -version
+```
+
+To test concatenation and muxing without hitting AI APIs, use the sample clips in `assets/`:
+
+```bash
+python -c "
+from kira.tools.concat_videos import concat_videos
+result = concat_videos(video_urls=['assets/01_star_core_lightning.mp4', 'assets/02_black_hole_reveal.mp4', 'assets/03_accretion_disk_hero.mp4'])
+print(result)
+"
+```
+
+### 4. Database connectivity (optional)
+
+If using Postgres, verify the connection:
+
+```bash
+python -c "
+from dotenv import load_dotenv; load_dotenv('kira/.env')
+from kira.db import get_pool
+import asyncio
+async def check():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        print(await conn.fetchval('SELECT 1'))
+asyncio.run(check())
+"
+```
+
+### 5. YouTube upload (optional)
+
+Use the included test script to verify OAuth credentials:
+
+```bash
+python test_upload.py
+```
+
+This uploads `test.mp4` as a **private** video. Requires `client_secret.json` and a valid `token.pickle` (run `python setup_oauth.py` first if needed).
+
+### 6. WhatsApp webhook (optional)
+
+With ngrok running (`ngrok http 8080`), send a test message from the Twilio sandbox. Check server logs for the incoming webhook and Kira's response.
+
+### Tips for reproducibility
+
+- **Pin your `.env`**: keep a `.env.example` (without real keys) so collaborators know which variables to set.
+- **Seed your prompts**: when debugging, send the same message to Kira repeatedly — the planning agent may pick different topics, but the pipeline path stays consistent.
+- **Check logs**: the server logs every tool call and API response at `INFO` level. Run with `--log-level debug` for full request/response bodies.
+
+---
+
 ## Findings & Learnings
 
 - **ADK's session model** maps cleanly onto WhatsApp's 24-hour messaging window — each conversation is a session, and the 2-hour inactivity cutoff mirrors natural chat behavior.
