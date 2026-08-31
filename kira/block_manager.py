@@ -321,12 +321,9 @@ async def create_block(form_data: dict) -> dict:
 
         client = genai.Client()
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
             config=genai.types.GenerateContentConfig(
-                thinking_config=genai.types.ThinkingConfig(
-                    thinking_budget=10000,
-                ),
                 response_mime_type="application/json",
             ),
         )
